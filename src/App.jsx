@@ -1,37 +1,70 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Plus, Save, Trash2, Edit2, ChevronUp, ChevronDown, Copy, X, Eye, EyeOff, FileDown, FileUp, BookOpen, Folder, Printer, Check } from 'lucide-react';
+import { Plus, Trash2, Edit2, ChevronUp, ChevronDown, Copy, X, Eye, EyeOff, FileDown, FileUp, BookOpen, Folder, Printer, Check, AlertCircle } from 'lucide-react';
 
-// ────────────────────────────────────────────────────────────
-// PÁLYAADATOK – betűk pozíciója (méterben), A lent, C fent
-// ────────────────────────────────────────────────────────────
-const LETTERS_60 = {
-  A: { x: 10, y: 60 }, K: { x: 20, y: 54 }, V: { x: 20, y: 42 },
-  E: { x: 20, y: 30 }, S: { x: 20, y: 18 }, H: { x: 20, y: 6 },
-  C: { x: 10, y: 0 }, M: { x: 0, y: 6 }, R: { x: 0, y: 18 },
-  B: { x: 0, y: 30 }, P: { x: 0, y: 42 }, F: { x: 0, y: 54 },
-  D: { x: 10, y: 54 }, L: { x: 10, y: 42 }, X: { x: 10, y: 30 },
-  I: { x: 10, y: 18 }, G: { x: 10, y: 6 },
-};
+// ════════════════════════════════════════════════════════════
+// PÁLYAADATOK – csak 20×40 m kis pálya
+// ════════════════════════════════════════════════════════════
+const ARENA_LEN = 40;
 
-const LETTERS_40 = {
+const LETTERS = {
   A: { x: 10, y: 40 }, K: { x: 20, y: 34 }, E: { x: 20, y: 20 },
-  H: { x: 20, y: 6 }, C: { x: 10, y: 0 }, M: { x: 0, y: 6 },
-  B: { x: 0, y: 20 }, F: { x: 0, y: 34 },
+  H: { x: 20, y: 6 },  C: { x: 10, y: 0 },  M: { x: 0, y: 6 },
+  B: { x: 0, y: 20 },  F: { x: 0, y: 34 },
   D: { x: 10, y: 34 }, X: { x: 10, y: 20 }, G: { x: 10, y: 6 },
 };
 
+// Karám menti pontok sorrendben (CW = óramutató járásával, Y le van fordítva)
+const PERIMETER = [
+  { name: 'A', x: 10, y: 40 },
+  { name: '_AK', x: 20, y: 40, isCorner: true },
+  { name: 'K', x: 20, y: 34 },
+  { name: 'E', x: 20, y: 20 },
+  { name: 'H', x: 20, y: 6 },
+  { name: '_HC', x: 20, y: 0, isCorner: true },
+  { name: 'C', x: 10, y: 0 },
+  { name: '_CM', x: 0, y: 0, isCorner: true },
+  { name: 'M', x: 0, y: 6 },
+  { name: 'B', x: 0, y: 20 },
+  { name: 'F', x: 0, y: 34 },
+  { name: '_FA', x: 0, y: 40, isCorner: true },
+];
+
+const INTERIOR_LETTERS = ['D', 'X', 'G'];
+
+// ════════════════════════════════════════════════════════════
+// MOZGÁSTÍPUS-OPCIÓK
+// ════════════════════════════════════════════════════════════
 const MOVEMENT_TYPES = [
-  { id: 'straight',         name: 'Egyenes vonal',          mode: 'two_letters' },
-  { id: 'centerline',       name: 'Középen (középvonal)',   mode: 'two_letters', defaults: { startLetter: 'A', endLetter: 'C' } },
-  { id: 'half_school',      name: 'Félpálya (E–B átvágás)', mode: 'two_letters', defaults: { startLetter: 'E', endLetter: 'B' } },
+  { id: 'straight',         name: 'Egyenes vonal',          mode: 'straight' },
+  { id: 'centerline',       name: 'Középen',                mode: 'centerline' },
+  { id: 'half_school',      name: 'Félpálya (E↔B)',         mode: 'half_school' },
   { id: 'small_circle_8',   name: 'Kiskör (8 m)',           mode: 'circle', diameter: 8 },
   { id: 'small_circle_10',  name: 'Kiskör (10 m)',          mode: 'circle', diameter: 10 },
   { id: 'small_circle_15',  name: 'Kör (15 m)',             mode: 'circle', diameter: 15 },
   { id: 'large_circle',     name: 'Nagykör (20 m)',         mode: 'circle', diameter: 20 },
-  { id: 'diagonal',         name: 'Átlóváltás (X-en át)',   mode: 'diagonal' },
-  { id: 'half_diagonal',    name: 'Félátlóváltás',          mode: 'two_letters' },
+  { id: 'diagonal',         name: 'Átlóváltás',             mode: 'diagonal' },
+  { id: 'half_diagonal',    name: 'Félátlóváltás',          mode: 'half_diagonal' },
   { id: 'change_in_circle', name: 'Körben válts',           mode: 'change_in_circle' },
 ];
+
+const CENTERLINE_OPTIONS = [
+  { id: 'A_C', from: 'A', to: 'C', label: 'A → C (belovaglás)' },
+  { id: 'C_A', from: 'C', to: 'A', label: 'C → A (kilovaglás)' },
+];
+
+const HALF_SCHOOL_OPTIONS = [
+  { id: 'E_B', from: 'E', to: 'B', label: 'E → B' },
+  { id: 'B_E', from: 'B', to: 'E', label: 'B → E' },
+];
+
+const DIAGONAL_OPTIONS = [
+  { id: 'KXM', from: 'K', to: 'M', label: 'KXM (jobb-alsó → bal-felső)' },
+  { id: 'FXH', from: 'F', to: 'H', label: 'FXH (bal-alsó → jobb-felső)' },
+  { id: 'HXF', from: 'H', to: 'F', label: 'HXF (jobb-felső → bal-alsó)' },
+  { id: 'MXK', from: 'M', to: 'K', label: 'MXK (bal-felső → jobb-alsó)' },
+];
+
+const VALID_DIAGONAL_STARTS = ['K', 'F', 'H', 'M'];
 
 const GAITS = [
   { id: 'halt',             name: 'Megállás',           color: '#5e5b54', dash: false },
@@ -49,9 +82,9 @@ const GAITS = [
   { id: 'canter_extended',  name: 'Nyújtott vágta',     color: '#5a360c', dash: false },
 ];
 
-// ────────────────────────────────────────────────────────────
-// LOCAL STORAGE WRAPPER – egyszerű key/value
-// ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// LOCAL STORAGE
+// ════════════════════════════════════════════════════════════
 const STORAGE_PREFIX = 'dijlovas:program:';
 
 function listPrograms() {
@@ -61,214 +94,369 @@ function listPrograms() {
     if (key && key.startsWith(STORAGE_PREFIX)) {
       try {
         const v = localStorage.getItem(key);
-        if (v) out.push(JSON.parse(v));
-      } catch (e) { /* ignore corrupt */ }
+        if (v) out.push(migrateProgram(JSON.parse(v)));
+      } catch (e) { /* skip */ }
     }
   }
   return out;
 }
+function saveProgram(p)        { localStorage.setItem(STORAGE_PREFIX + p.id, JSON.stringify(p)); }
+function deleteStoredProgram(id) { localStorage.removeItem(STORAGE_PREFIX + id); }
 
-function saveProgram(p) {
-  localStorage.setItem(STORAGE_PREFIX + p.id, JSON.stringify(p));
+// ════════════════════════════════════════════════════════════
+// MIGRATION – régi programok / mozgások konvertálása
+// ════════════════════════════════════════════════════════════
+function migrateMovement(m) {
+  const t = MOVEMENT_TYPES.find(t => t.id === m.type);
+  if (!t) return m;
+  const out = { ...m };
+  if (t.mode === 'centerline' && !m.choice && m.startLetter && m.endLetter) {
+    out.choice = CENTERLINE_OPTIONS.find(o => o.from === m.startLetter && o.to === m.endLetter)?.id || 'A_C';
+  }
+  if (t.mode === 'half_school' && !m.choice && m.startLetter && m.endLetter) {
+    out.choice = HALF_SCHOOL_OPTIONS.find(o => o.from === m.startLetter && o.to === m.endLetter)?.id || 'E_B';
+  }
+  if (t.mode === 'diagonal' && !m.choice && m.startLetter && m.endLetter) {
+    out.choice = DIAGONAL_OPTIONS.find(o => o.from === m.startLetter && o.to === m.endLetter)?.id || 'KXM';
+  }
+  return out;
 }
 
-function deleteStoredProgram(id) {
-  localStorage.removeItem(STORAGE_PREFIX + id);
+function isMovementValid(m) {
+  const checks = [m.startLetter, m.endLetter, m.centerLetter].filter(Boolean);
+  return checks.every(l => Object.keys(LETTERS).includes(l));
 }
 
-// ────────────────────────────────────────────────────────────
-// ÚTVONAL GENERÁLÁS – SVG path string
-// ────────────────────────────────────────────────────────────
-function getCircleCenter(letterPos, radius, arenaLen) {
-  if (letterPos.x === 10 && letterPos.y === 0)        return { x: 10, y: radius };
-  if (letterPos.x === 10 && letterPos.y === arenaLen) return { x: 10, y: arenaLen - radius };
-  if (letterPos.x === 0)                              return { x: radius, y: letterPos.y };
-  if (letterPos.x === 20)                             return { x: 20 - radius, y: letterPos.y };
+function migrateProgram(p) {
+  return {
+    ...p,
+    arenaSize: '20x40',
+    movements: (p.movements || []).map(migrateMovement).filter(isMovementValid),
+  };
+}
+
+// ════════════════════════════════════════════════════════════
+// PATH GENERÁLÁS – segédfüggvények
+// ════════════════════════════════════════════════════════════
+const isInterior = (letter) => INTERIOR_LETTERS.includes(letter);
+
+function perimeterPathBetween(startLetter, endLetter, direction) {
+  const len = PERIMETER.length;
+  const startIdx = PERIMETER.findIndex(p => p.name === startLetter);
+  const endIdx   = PERIMETER.findIndex(p => p.name === endLetter);
+  if (startIdx < 0 || endIdx < 0) return [];
+  const points = [];
+  let i = startIdx;
+  if (direction === 'cw') {
+    while (i !== endIdx) { points.push(PERIMETER[i]); i = (i + 1) % len; }
+    points.push(PERIMETER[endIdx]);
+  } else {
+    while (i !== endIdx) { points.push(PERIMETER[i]); i = (i - 1 + len) % len; }
+    points.push(PERIMETER[endIdx]);
+  }
+  return points;
+}
+
+function pathLength(points) {
+  let l = 0;
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i].x - points[i-1].x;
+    const dy = points[i].y - points[i-1].y;
+    l += Math.sqrt(dx*dx + dy*dy);
+  }
+  return l;
+}
+
+function pointsToSvgPath(points) {
+  return points.map((p, i) => i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`).join(' ');
+}
+
+function getCircleCenter(letterPos, radius) {
+  if (letterPos.x === 10 && letterPos.y === 0)         return { x: 10, y: radius };
+  if (letterPos.x === 10 && letterPos.y === ARENA_LEN) return { x: 10, y: ARENA_LEN - radius };
+  if (letterPos.x === 0)                                return { x: radius, y: letterPos.y };
+  if (letterPos.x === 20)                               return { x: 20 - radius, y: letterPos.y };
   return { ...letterPos };
 }
 
-function generatePath(m, letters, arenaLen) {
-  const type = MOVEMENT_TYPES.find(t => t.id === m.type);
-  if (!type) return '';
+// ════════════════════════════════════════════════════════════
+// PATH GENERÁTOROK
+// ════════════════════════════════════════════════════════════
+function generateStraightPath(m) {
+  const start = LETTERS[m.startLetter];
+  const end   = LETTERS[m.endLetter];
+  if (!start || !end) return '';
 
-  const start = letters[m.startLetter];
-  const end   = letters[m.endLetter];
-  const ctr   = letters[m.centerLetter];
+  const sInt = isInterior(m.startLetter);
+  const eInt = isInterior(m.endLetter);
 
-  switch (type.mode) {
-    case 'two_letters': {
-      if (!start || !end) return '';
-      return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
-    }
-    case 'diagonal': {
-      const X = letters['X'];
-      if (!start || !end || !X) return '';
-      return `M ${start.x} ${start.y} L ${X.x} ${X.y} L ${end.x} ${end.y}`;
-    }
-    case 'circle': {
-      if (!ctr) return '';
-      const r = type.diameter / 2;
-      const c = getCircleCenter(ctr, r, arenaLen);
-      return `M ${c.x - r} ${c.y} A ${r} ${r} 0 1 1 ${c.x + r} ${c.y} A ${r} ${r} 0 1 1 ${c.x - r} ${c.y}`;
-    }
-    case 'change_in_circle': {
-      if (!ctr) return '';
-      const big = getCircleCenter(ctr, 10, arenaLen);
-      const horizontal = ctr.x === 10;
-      if (horizontal) {
-        return `M 20 ${big.y} A 5 5 0 0 1 10 ${big.y} A 5 5 0 0 0 0 ${big.y}`;
-      } else {
-        return `M ${big.x} ${big.y - 10} A 5 5 0 0 0 ${big.x} ${big.y} A 5 5 0 0 1 ${big.x} ${big.y + 10}`;
-      }
-    }
-    default:
-      return '';
+  // (1) Mindkettő belső – egyenes a középvonalon
+  if (sInt && eInt) return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
+
+  // (2) Mindkettő karám – karám mentén, sarkokon át
+  if (!sInt && !eInt) {
+    const cw  = perimeterPathBetween(m.startLetter, m.endLetter, 'cw');
+    const ccw = perimeterPathBetween(m.startLetter, m.endLetter, 'ccw');
+    const variant = m.variant || 'auto';
+    let chosen;
+    if      (variant === 'cw')  chosen = cw;
+    else if (variant === 'ccw') chosen = ccw;
+    else if (variant === 'alt') chosen = pathLength(cw) <= pathLength(ccw) ? ccw : cw;
+    else                        chosen = pathLength(cw) <= pathLength(ccw) ? cw : ccw;
+    return pointsToSvgPath(chosen);
+  }
+
+  // (3) Egyik belső, másik karám
+  const interiorLetter = sInt ? m.startLetter : m.endLetter;
+  const exteriorLetter = sInt ? m.endLetter   : m.startLetter;
+  const interiorPoint  = LETTERS[interiorLetter];
+  const exteriorPoint  = LETTERS[exteriorLetter];
+
+  const exitMode = m.exitMode || 'centerline';
+  let intermediateLetter;
+  if (exitMode === 'centerline') {
+    const dA = Math.abs(exteriorPoint.y - LETTERS.A.y);
+    const dC = Math.abs(exteriorPoint.y - LETTERS.C.y);
+    intermediateLetter = dA <= dC ? 'A' : 'C';
+  } else {
+    intermediateLetter = exteriorPoint.x === 0 ? 'B' : 'E';
+  }
+
+  if (intermediateLetter === exteriorLetter) {
+    return sInt
+      ? `M ${interiorPoint.x} ${interiorPoint.y} L ${exteriorPoint.x} ${exteriorPoint.y}`
+      : `M ${exteriorPoint.x} ${exteriorPoint.y} L ${interiorPoint.x} ${interiorPoint.y}`;
+  }
+
+  const cw  = perimeterPathBetween(intermediateLetter, exteriorLetter, 'cw');
+  const ccw = perimeterPathBetween(intermediateLetter, exteriorLetter, 'ccw');
+  const variant = m.variant || 'auto';
+  let perimChosen;
+  if      (variant === 'cw')  perimChosen = cw;
+  else if (variant === 'ccw') perimChosen = ccw;
+  else if (variant === 'alt') perimChosen = pathLength(cw) <= pathLength(ccw) ? ccw : cw;
+  else                        perimChosen = pathLength(cw) <= pathLength(ccw) ? cw : ccw;
+
+  const allPoints = sInt
+    ? [interiorPoint, ...perimChosen]
+    : [...perimChosen.slice().reverse(), interiorPoint];
+
+  return pointsToSvgPath(allPoints);
+}
+
+function generateCenterlinePath(m) {
+  const o = CENTERLINE_OPTIONS.find(c => c.id === m.choice);
+  if (!o) return '';
+  const a = LETTERS[o.from], b = LETTERS[o.to];
+  return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+}
+
+function generateHalfSchoolPath(m) {
+  const o = HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice);
+  if (!o) return '';
+  const a = LETTERS[o.from], b = LETTERS[o.to];
+  return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+}
+
+function generateDiagonalPath(m) {
+  const o = DIAGONAL_OPTIONS.find(d => d.id === m.choice);
+  if (!o) return '';
+  const a = LETTERS[o.from], b = LETTERS[o.to], X = LETTERS.X;
+  return `M ${a.x} ${a.y} L ${X.x} ${X.y} L ${b.x} ${b.y}`;
+}
+
+function generateHalfDiagonalPath(m) {
+  const a = LETTERS[m.startLetter], b = LETTERS[m.endLetter];
+  if (!a || !b) return '';
+  return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+}
+
+function generateCirclePath(m, diameter) {
+  const ctr = LETTERS[m.centerLetter];
+  if (!ctr) return '';
+  const r = diameter / 2;
+  const c = getCircleCenter(ctr, r);
+  return `M ${c.x - r} ${c.y} A ${r} ${r} 0 1 1 ${c.x + r} ${c.y} A ${r} ${r} 0 1 1 ${c.x - r} ${c.y}`;
+}
+
+function generateChangeInCirclePath(m) {
+  const ctr = LETTERS[m.centerLetter];
+  if (!ctr) return '';
+  const big = getCircleCenter(ctr, 10);
+  const horizontal = ctr.x === 10;
+  return horizontal
+    ? `M 20 ${big.y} A 5 5 0 0 1 10 ${big.y} A 5 5 0 0 0 0 ${big.y}`
+    : `M ${big.x} ${big.y - 10} A 5 5 0 0 0 ${big.x} ${big.y} A 5 5 0 0 1 ${big.x} ${big.y + 10}`;
+}
+
+function generatePath(m) {
+  const t = MOVEMENT_TYPES.find(t => t.id === m.type);
+  if (!t) return '';
+  switch (t.mode) {
+    case 'straight':         return generateStraightPath(m);
+    case 'centerline':       return generateCenterlinePath(m);
+    case 'half_school':      return generateHalfSchoolPath(m);
+    case 'diagonal':         return generateDiagonalPath(m);
+    case 'half_diagonal':    return generateHalfDiagonalPath(m);
+    case 'circle':           return generateCirclePath(m, t.diameter);
+    case 'change_in_circle': return generateChangeInCirclePath(m);
+    default:                 return '';
   }
 }
 
-function getMovementMidpoint(m, letters, arenaLen) {
-  const type = MOVEMENT_TYPES.find(t => t.id === m.type);
-  if (!type) return null;
-  if (type.mode === 'two_letters') {
-    const a = letters[m.startLetter], b = letters[m.endLetter];
-    if (!a || !b) return null;
-    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+// ════════════════════════════════════════════════════════════
+// MOZGÁS START / END BETŰJE (folytonosság-ellenőrzés)
+// ════════════════════════════════════════════════════════════
+function getMovementStart(m) {
+  const t = MOVEMENT_TYPES.find(t => t.id === m.type);
+  if (!t) return null;
+  switch (t.mode) {
+    case 'straight':
+    case 'half_diagonal':    return m.startLetter;
+    case 'centerline':       return CENTERLINE_OPTIONS.find(c => c.id === m.choice)?.from;
+    case 'half_school':      return HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice)?.from;
+    case 'diagonal':         return DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.from;
+    case 'circle':
+    case 'change_in_circle': return m.centerLetter;
+    default:                 return null;
   }
-  if (type.mode === 'diagonal') return letters['X'] || null;
-  if (type.mode === 'circle') {
-    const ctr = letters[m.centerLetter];
-    if (!ctr) return null;
-    const r = type.diameter / 2;
-    return getCircleCenter(ctr, r, arenaLen);
-  }
-  if (type.mode === 'change_in_circle') {
-    const ctr = letters[m.centerLetter];
-    if (!ctr) return null;
-    return getCircleCenter(ctr, 10, arenaLen);
-  }
-  return null;
 }
 
-// ────────────────────────────────────────────────────────────
+function getMovementEnd(m) {
+  const t = MOVEMENT_TYPES.find(t => t.id === m.type);
+  if (!t) return null;
+  switch (t.mode) {
+    case 'straight':
+    case 'half_diagonal':    return m.endLetter;
+    case 'centerline':       return CENTERLINE_OPTIONS.find(c => c.id === m.choice)?.to;
+    case 'half_school':      return HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice)?.to;
+    case 'diagonal':         return DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.to;
+    case 'circle':
+    case 'change_in_circle': return m.centerLetter;
+    default:                 return null;
+  }
+}
+
+function getMovementMidpoint(m) {
+  const t = MOVEMENT_TYPES.find(t => t.id === m.type);
+  if (!t) return null;
+  switch (t.mode) {
+    case 'straight':
+    case 'half_diagonal': {
+      const a = LETTERS[m.startLetter], b = LETTERS[m.endLetter];
+      if (!a || !b) return null;
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    }
+    case 'centerline': {
+      const o = CENTERLINE_OPTIONS.find(c => c.id === m.choice);
+      if (!o) return null;
+      const a = LETTERS[o.from], b = LETTERS[o.to];
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    }
+    case 'half_school': {
+      const o = HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice);
+      if (!o) return null;
+      const a = LETTERS[o.from], b = LETTERS[o.to];
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    }
+    case 'diagonal':         return LETTERS.X;
+    case 'circle':           return getCircleCenter(LETTERS[m.centerLetter], t.diameter / 2);
+    case 'change_in_circle': return getCircleCenter(LETTERS[m.centerLetter], 10);
+    default:                 return null;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
 // SVG PÁLYA
-// ────────────────────────────────────────────────────────────
-function Arena({ size, movements, highlightedIdx, showAll }) {
-  const letters  = size === '20x60' ? LETTERS_60 : LETTERS_40;
-  const arenaLen = size === '20x60' ? 60 : 40;
+// ════════════════════════════════════════════════════════════
+function Arena({ movements, highlightedIdx, showAll }) {
   const padX = 4.5, padY = 4.5;
-
   return (
-    <svg
-      viewBox={`${-padX} ${-padY} ${20 + padX * 2} ${arenaLen + padY * 2}`}
-      className="w-full h-full"
-      style={{ maxHeight: '100%' }}
-    >
-      <rect x={-padX} y={-padY} width={20 + padX * 2} height={arenaLen + padY * 2} fill="#faf6ec" />
-
-      <rect x="0" y="0" width="20" height={arenaLen} fill="#ffffff" stroke="#1a1a18" strokeWidth="0.18" />
-
-      <rect x="1" y="1" width="18" height={arenaLen - 2} fill="none" stroke="#d4c9a8" strokeWidth="0.05" strokeDasharray="0.6 0.4" />
-
-      <line x1="10" y1="0" x2="10" y2={arenaLen} stroke="#c9bfa3" strokeWidth="0.05" strokeDasharray="0.5 0.5" />
-      <line x1="0" y1={arenaLen / 2} x2="20" y2={arenaLen / 2} stroke="#c9bfa3" strokeWidth="0.05" strokeDasharray="0.5 0.5" />
-
+    <svg viewBox={`${-padX} ${-padY} ${20 + padX * 2} ${ARENA_LEN + padY * 2}`} className="w-full h-full" style={{ maxHeight: '100%' }}>
+      <rect x={-padX} y={-padY} width={20 + padX * 2} height={ARENA_LEN + padY * 2} fill="#faf6ec" />
+      <rect x="0" y="0" width="20" height={ARENA_LEN} fill="#ffffff" stroke="#1a1a18" strokeWidth="0.18" />
+      <rect x="1" y="1" width="18" height={ARENA_LEN - 2} fill="none" stroke="#d4c9a8" strokeWidth="0.05" strokeDasharray="0.6 0.4" />
+      <line x1="10" y1="0" x2="10" y2={ARENA_LEN} stroke="#c9bfa3" strokeWidth="0.05" strokeDasharray="0.5 0.5" />
+      <line x1="0" y1={ARENA_LEN / 2} x2="20" y2={ARENA_LEN / 2} stroke="#c9bfa3" strokeWidth="0.05" strokeDasharray="0.5 0.5" />
       <g>
-        <line x1="9.3" y1={arenaLen / 2 - 0.7} x2="10.7" y2={arenaLen / 2 + 0.7} stroke="#a89880" strokeWidth="0.1" />
-        <line x1="9.3" y1={arenaLen / 2 + 0.7} x2="10.7" y2={arenaLen / 2 - 0.7} stroke="#a89880" strokeWidth="0.1" />
+        <line x1="9.3" y1={ARENA_LEN / 2 - 0.7} x2="10.7" y2={ARENA_LEN / 2 + 0.7} stroke="#a89880" strokeWidth="0.1" />
+        <line x1="9.3" y1={ARENA_LEN / 2 + 0.7} x2="10.7" y2={ARENA_LEN / 2 - 0.7} stroke="#a89880" strokeWidth="0.1" />
       </g>
 
       {movements.map((m, idx) => {
         if (!showAll && idx !== highlightedIdx) return null;
         const isHi   = idx === highlightedIdx;
-        const path   = generatePath(m, letters, arenaLen);
+        const path   = generatePath(m);
         if (!path) return null;
         const gait   = GAITS.find(g => g.id === m.gait);
         const color  = gait?.color || '#5e5b54';
         const dashed = gait?.dash;
-
         return (
-          <g key={m.id}>
-            <path
-              d={path}
-              fill="none"
-              stroke={color}
-              strokeWidth={isHi ? 0.55 : 0.35}
-              strokeOpacity={(showAll && !isHi && highlightedIdx != null) ? 0.32 : 0.92}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeDasharray={dashed ? '0.7 0.4' : undefined}
-            />
-          </g>
+          <path key={m.id} d={path} fill="none" stroke={color}
+                strokeWidth={isHi ? 0.55 : 0.35}
+                strokeOpacity={(showAll && !isHi && highlightedIdx != null) ? 0.32 : 0.92}
+                strokeLinecap="round" strokeLinejoin="round"
+                strokeDasharray={dashed ? '0.7 0.4' : undefined} />
         );
       })}
 
       {movements.map((m, idx) => {
         if (!showAll && idx !== highlightedIdx) return null;
-        const isHi = idx === highlightedIdx;
-        const mid  = getMovementMidpoint(m, letters, arenaLen);
+        const isHi  = idx === highlightedIdx;
+        const mid   = getMovementMidpoint(m);
         if (!mid) return null;
         const gait  = GAITS.find(g => g.id === m.gait);
         const color = gait?.color || '#5e5b54';
         return (
           <g key={`n-${m.id}`}>
-            <circle
-              cx={mid.x} cy={mid.y} r={isHi ? 1.3 : 1.05}
-              fill="#faf6ec" stroke={color}
-              strokeWidth={isHi ? 0.25 : 0.18}
-              opacity={(showAll && !isHi && highlightedIdx != null) ? 0.5 : 1}
-            />
-            <text
-              x={mid.x} y={mid.y}
-              fontSize={isHi ? 1.4 : 1.15}
-              fontFamily="'Fraunces', Georgia, serif"
-              fontWeight="600"
-              textAnchor="middle"
-              dominantBaseline="central"
-              fill={color}
-              opacity={(showAll && !isHi && highlightedIdx != null) ? 0.6 : 1}
-            >{idx + 1}</text>
+            <circle cx={mid.x} cy={mid.y} r={isHi ? 1.3 : 1.05}
+                    fill="#faf6ec" stroke={color}
+                    strokeWidth={isHi ? 0.25 : 0.18}
+                    opacity={(showAll && !isHi && highlightedIdx != null) ? 0.5 : 1} />
+            <text x={mid.x} y={mid.y}
+                  fontSize={isHi ? 1.4 : 1.15}
+                  fontFamily="'Fraunces', Georgia, serif"
+                  fontWeight="600" textAnchor="middle" dominantBaseline="central"
+                  fill={color}
+                  opacity={(showAll && !isHi && highlightedIdx != null) ? 0.6 : 1}>
+              {idx + 1}
+            </text>
           </g>
         );
       })}
 
-      {Object.entries(letters).map(([letter, pos]) => {
+      {Object.entries(LETTERS).map(([letter, pos]) => {
         const onLeft   = pos.x === 0;
         const onRight  = pos.x === 20;
-        const onShortA = pos.y === arenaLen;
+        const onShortA = pos.y === ARENA_LEN;
         const onShortC = pos.y === 0;
         const onCenter = pos.x === 10 && !onShortA && !onShortC;
-
         let tx = pos.x, ty = pos.y;
         if (onLeft)        tx = -2.5;
         else if (onRight)  tx = 22.5;
-        else if (onShortA) ty = arenaLen + 3;
+        else if (onShortA) ty = ARENA_LEN + 3;
         else if (onShortC) ty = -2.2;
         else if (onCenter) tx = 11.7;
-
-        const isCenterMark = onCenter;
-
         return (
           <g key={letter}>
-            {!isCenterMark && (
+            {!onCenter && (
               <line
                 x1={onLeft ? 0 : onRight ? 20 : pos.x}
-                y1={onShortA ? arenaLen : onShortC ? 0 : pos.y}
+                y1={onShortA ? ARENA_LEN : onShortC ? 0 : pos.y}
                 x2={onLeft ? -1.2 : onRight ? 21.2 : pos.x}
-                y2={onShortA ? arenaLen + 1.2 : onShortC ? -1.2 : pos.y}
-                stroke="#1a1a18"
-                strokeWidth="0.12"
+                y2={onShortA ? ARENA_LEN + 1.2 : onShortC ? -1.2 : pos.y}
+                stroke="#1a1a18" strokeWidth="0.12"
               />
             )}
-            <text
-              x={tx} y={ty}
-              fontSize={isCenterMark ? 2 : 2.6}
-              fontFamily="'Fraunces', Georgia, serif"
-              fontWeight={isCenterMark ? 500 : 700}
-              textAnchor="middle"
-              dominantBaseline="central"
-              fill={isCenterMark ? '#9a8e75' : '#1a1a18'}
-              fontStyle={isCenterMark ? 'italic' : 'normal'}
-            >{letter}</text>
+            <text x={tx} y={ty}
+                  fontSize={onCenter ? 2 : 2.6}
+                  fontFamily="'Fraunces', Georgia, serif"
+                  fontWeight={onCenter ? 500 : 700}
+                  textAnchor="middle" dominantBaseline="central"
+                  fill={onCenter ? '#9a8e75' : '#1a1a18'}
+                  fontStyle={onCenter ? 'italic' : 'normal'}>
+              {letter}
+            </text>
           </g>
         );
       })}
@@ -276,79 +464,239 @@ function Arena({ size, movements, highlightedIdx, showAll }) {
   );
 }
 
-// ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
 // MOZGÁS-SZERKESZTŐ FORM
-// ────────────────────────────────────────────────────────────
-function MovementForm({ initial, arenaSize, onSave, onCancel }) {
-  const letters = arenaSize === '20x60' ? LETTERS_60 : LETTERS_40;
-  const letterKeys = Object.keys(letters);
+// ════════════════════════════════════════════════════════════
+function MovementForm({ initial, previousEndLetter, onSave, onCancel }) {
+  const letterKeys = Object.keys(LETTERS);
 
-  const [type, setType]   = useState(initial?.type   || 'straight');
-  const [start, setStart] = useState(initial?.startLetter   || 'A');
-  const [end, setEnd]     = useState(initial?.endLetter     || 'C');
-  const [ctr, setCtr]     = useState(initial?.centerLetter  || 'X');
-  const [gait, setGait]   = useState(initial?.gait || 'trot_working');
-  const [notes, setNotes] = useState(initial?.notes || '');
+  const [state, setState] = useState(() => {
+    if (initial) return { ...initial };
+    return {
+      type: 'straight',
+      startLetter: previousEndLetter || 'A',
+      endLetter:   'C',
+      centerLetter:'X',
+      choice:      null,
+      variant:     'auto',
+      exitMode:    'centerline',
+      gait:        'trot_working',
+      notes:       '',
+    };
+  });
 
-  const typeDef = MOVEMENT_TYPES.find(t => t.id === type);
+  const update = (patch) => setState(s => ({ ...s, ...patch }));
 
-  useEffect(() => {
-    if (initial && initial.type === type) return;
-    const td = MOVEMENT_TYPES.find(t => t.id === type);
-    if (td?.defaults) {
-      setStart(td.defaults.startLetter || start);
-      setEnd(td.defaults.endLetter || end);
+  const typeDef = MOVEMENT_TYPES.find(t => t.id === state.type);
+
+  const diagonalDisabled = !initial && (!previousEndLetter || !VALID_DIAGONAL_STARTS.includes(previousEndLetter));
+
+  function handleSelectType(newType) {
+    const td = MOVEMENT_TYPES.find(t => t.id === newType);
+    const updates = { type: newType };
+    switch (td?.mode) {
+      case 'centerline':
+        if (!CENTERLINE_OPTIONS.find(c => c.id === state.choice)) updates.choice = 'A_C';
+        break;
+      case 'half_school':
+        if (!HALF_SCHOOL_OPTIONS.find(h => h.id === state.choice)) updates.choice = 'E_B';
+        break;
+      case 'diagonal': {
+        const valid = previousEndLetter
+          ? DIAGONAL_OPTIONS.find(d => d.from === previousEndLetter)
+          : null;
+        updates.choice = valid?.id || 'KXM';
+        break;
+      }
+      default: break;
     }
-    if (td?.mode === 'circle' || td?.mode === 'change_in_circle') {
-      if (!letterKeys.includes(ctr)) setCtr('X');
-    }
-    if (td?.mode === 'diagonal') {
-      if (!start || !end) { setStart('H'); setEnd('F'); }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type]);
+    update(updates);
+  }
 
   function handleSave() {
+    const td = MOVEMENT_TYPES.find(t => t.id === state.type);
     const payload = {
-      id:    initial?.id || Date.now().toString(36) + Math.random().toString(36).slice(2,6),
-      type, gait, notes,
+      id: initial?.id || Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+      type: state.type,
+      gait: state.gait,
+      notes: state.notes,
     };
-    if (typeDef.mode === 'two_letters' || typeDef.mode === 'diagonal') {
-      payload.startLetter = start;
-      payload.endLetter   = end;
-    }
-    if (typeDef.mode === 'circle' || typeDef.mode === 'change_in_circle') {
-      payload.centerLetter = ctr;
+    switch (td.mode) {
+      case 'straight':
+        payload.startLetter = state.startLetter;
+        payload.endLetter   = state.endLetter;
+        payload.exitMode    = state.exitMode;
+        payload.variant     = state.variant;
+        break;
+      case 'centerline':
+      case 'half_school':
+      case 'diagonal':
+        payload.choice = state.choice;
+        break;
+      case 'half_diagonal':
+        payload.startLetter = state.startLetter;
+        payload.endLetter   = state.endLetter;
+        break;
+      case 'circle':
+      case 'change_in_circle':
+        payload.centerLetter = state.centerLetter;
+        break;
     }
     onSave(payload);
   }
 
-  const inputClass  = "w-full px-3 py-2 bg-paper border border-[#d4c9a8] rounded text-charcoal focus:outline-none focus:border-forest focus:ring-1 focus:ring-forest/30 transition";
-  const labelClass  = "block text-[11px] font-medium text-[#5e5b54] uppercase tracking-wider mb-1";
+  const inputClass = "w-full px-3 py-2 bg-paper border border-[#d4c9a8] rounded text-charcoal focus:outline-none focus:border-forest focus:ring-1 focus:ring-forest/30 transition";
+  const labelClass = "block text-[11px] font-medium text-[#5e5b54] uppercase tracking-wider mb-1";
+
+  const straightInfo = useMemo(() => {
+    if (typeDef.mode !== 'straight') return null;
+    const sInt = isInterior(state.startLetter);
+    const eInt = isInterior(state.endLetter);
+    return {
+      bothInterior: sInt && eInt,
+      bothExterior: !sInt && !eInt,
+      mixed:        sInt !== eInt,
+    };
+  }, [typeDef, state.startLetter, state.endLetter]);
 
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <label className={labelClass}>Mozgás típusa</label>
-          <select className={inputClass} value={type} onChange={e => setType(e.target.value)}>
-            {MOVEMENT_TYPES.map(t => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
+          <select className={inputClass} value={state.type} onChange={e => handleSelectType(e.target.value)}>
+            {MOVEMENT_TYPES.map(t => {
+              const isDisabled = t.id === 'diagonal' && diagonalDisabled;
+              return (
+                <option key={t.id} value={t.id} disabled={isDisabled}>
+                  {t.name}{isDisabled ? '  — sarokponton kell lenni (K/F/H/M)' : ''}
+                </option>
+              );
+            })}
           </select>
+          {state.type === 'diagonal' && diagonalDisabled && (
+            <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-[#925a1a]">
+              <AlertCircle size={12} className="mt-0.5 flex-none" />
+              <span>Átlóváltás csak K, F, H vagy M sarokpontból indítható.</span>
+            </div>
+          )}
         </div>
 
-        {(typeDef.mode === 'two_letters' || typeDef.mode === 'diagonal') && (
+        {typeDef.mode === 'straight' && (
           <>
             <div>
               <label className={labelClass}>Kezdő betű</label>
-              <select className={inputClass} value={start} onChange={e => setStart(e.target.value)}>
+              <select className={inputClass} value={state.startLetter} onChange={e => update({ startLetter: e.target.value })}>
+                {letterKeys.map(k => <option key={k} value={k}>{k}{isInterior(k) ? ' (belső)' : ''}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelClass}>Záró betű</label>
+              <select className={inputClass} value={state.endLetter} onChange={e => update({ endLetter: e.target.value })}>
+                {letterKeys.map(k => <option key={k} value={k}>{k}{isInterior(k) ? ' (belső)' : ''}</option>)}
+              </select>
+            </div>
+
+            {straightInfo?.bothInterior && (
+              <div className="col-span-2 text-[11px] text-[#5e5b54] italic px-1">
+                Két belső pont – egyenes a középvonalon.
+              </div>
+            )}
+
+            {straightInfo?.mixed && (
+              <>
+                <div className="col-span-2">
+                  <label className={labelClass}>Kifelé haladás módja</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button"
+                            onClick={() => update({ exitMode: 'centerline' })}
+                            className={`px-2 py-2 rounded text-[11px] leading-tight border transition ${
+                              state.exitMode === 'centerline'
+                                ? 'bg-forest text-cream border-forest'
+                                : 'bg-paper border-[#d4c9a8] text-[#5e5b54] hover:bg-[#f0eadc]'
+                            }`}>
+                      Középvonalon át<br/>
+                      <span className="text-[10px] opacity-80">(rövid oldali karámra)</span>
+                    </button>
+                    <button type="button"
+                            onClick={() => update({ exitMode: 'perpendicular' })}
+                            className={`px-2 py-2 rounded text-[11px] leading-tight border transition ${
+                              state.exitMode === 'perpendicular'
+                                ? 'bg-forest text-cream border-forest'
+                                : 'bg-paper border-[#d4c9a8] text-[#5e5b54] hover:bg-[#f0eadc]'
+                            }`}>
+                      Merőlegesen kifelé<br/>
+                      <span className="text-[10px] opacity-80">(hosszú oldali karámra)</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="col-span-2">
+                  <label className={labelClass}>Karám menti irány</label>
+                  <select className={inputClass} value={state.variant} onChange={e => update({ variant: e.target.value })}>
+                    <option value="auto">Rövidebb úton (auto)</option>
+                    <option value="alt">Másik (hosszabb) úton</option>
+                  </select>
+                </div>
+              </>
+            )}
+
+            {straightInfo?.bothExterior && (
+              <div className="col-span-2">
+                <label className={labelClass}>Karám menti irány</label>
+                <select className={inputClass} value={state.variant} onChange={e => update({ variant: e.target.value })}>
+                  <option value="auto">Rövidebb úton (auto)</option>
+                  <option value="alt">Másik (hosszabb) úton</option>
+                </select>
+              </div>
+            )}
+          </>
+        )}
+
+        {typeDef.mode === 'centerline' && (
+          <div className="col-span-2">
+            <label className={labelClass}>Irány</label>
+            <select className={inputClass} value={state.choice || 'A_C'} onChange={e => update({ choice: e.target.value })}>
+              {CENTERLINE_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+          </div>
+        )}
+
+        {typeDef.mode === 'half_school' && (
+          <div className="col-span-2">
+            <label className={labelClass}>Irány</label>
+            <select className={inputClass} value={state.choice || 'E_B'} onChange={e => update({ choice: e.target.value })}>
+              {HALF_SCHOOL_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+          </div>
+        )}
+
+        {typeDef.mode === 'diagonal' && (
+          <div className="col-span-2">
+            <label className={labelClass}>Átló</label>
+            <select className={inputClass} value={state.choice || 'KXM'} onChange={e => update({ choice: e.target.value })}>
+              {DIAGONAL_OPTIONS.map(o => {
+                const incompatible = !initial && previousEndLetter && o.from !== previousEndLetter;
+                return (
+                  <option key={o.id} value={o.id} disabled={incompatible}>
+                    {o.label}{incompatible ? '  — nem ettől a ponttól' : ''}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}
+
+        {typeDef.mode === 'half_diagonal' && (
+          <>
+            <div>
+              <label className={labelClass}>Kezdő betű</label>
+              <select className={inputClass} value={state.startLetter} onChange={e => update({ startLetter: e.target.value })}>
                 {letterKeys.map(k => <option key={k} value={k}>{k}</option>)}
               </select>
             </div>
             <div>
               <label className={labelClass}>Záró betű</label>
-              <select className={inputClass} value={end} onChange={e => setEnd(e.target.value)}>
+              <select className={inputClass} value={state.endLetter} onChange={e => update({ endLetter: e.target.value })}>
                 {letterKeys.map(k => <option key={k} value={k}>{k}</option>)}
               </select>
             </div>
@@ -358,7 +706,7 @@ function MovementForm({ initial, arenaSize, onSave, onCancel }) {
         {(typeDef.mode === 'circle' || typeDef.mode === 'change_in_circle') && (
           <div className="col-span-2">
             <label className={labelClass}>Központ (mely betűnél)</label>
-            <select className={inputClass} value={ctr} onChange={e => setCtr(e.target.value)}>
+            <select className={inputClass} value={state.centerLetter} onChange={e => update({ centerLetter: e.target.value })}>
               {letterKeys.map(k => <option key={k} value={k}>{k}</option>)}
             </select>
           </div>
@@ -366,35 +714,27 @@ function MovementForm({ initial, arenaSize, onSave, onCancel }) {
 
         <div className="col-span-2">
           <label className={labelClass}>Jármód</label>
-          <select className={inputClass} value={gait} onChange={e => setGait(e.target.value)}>
+          <select className={inputClass} value={state.gait} onChange={e => update({ gait: e.target.value })}>
             {GAITS.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
         </div>
 
         <div className="col-span-2">
           <label className={labelClass}>Megjegyzés</label>
-          <textarea
-            className={inputClass}
-            rows={2}
-            value={notes}
-            onChange={e => setNotes(e.target.value)}
-            placeholder="pl. átmenet, segítségadás, hangulat..."
-          />
+          <textarea className={inputClass} rows={2} value={state.notes}
+                    onChange={e => update({ notes: e.target.value })}
+                    placeholder="pl. átmenet, segítségadás, hangulat..." />
         </div>
       </div>
 
       <div className="flex gap-2 pt-1">
-        <button
-          onClick={handleSave}
-          className="flex-1 px-4 py-2.5 bg-forest text-cream rounded font-medium hover:bg-[#2a4d3a] transition flex items-center justify-center gap-2"
-        >
+        <button onClick={handleSave}
+                className="flex-1 px-4 py-2.5 bg-forest text-cream rounded font-medium hover:bg-[#2a4d3a] transition flex items-center justify-center gap-2">
           <Check size={16} />
           {initial ? 'Mentés' : 'Hozzáadás'}
         </button>
-        <button
-          onClick={onCancel}
-          className="px-4 py-2.5 bg-transparent border border-[#d4c9a8] text-[#5e5b54] rounded font-medium hover:bg-[#f0eadc] transition"
-        >
+        <button onClick={onCancel}
+                className="px-4 py-2.5 bg-transparent border border-[#d4c9a8] text-[#5e5b54] rounded font-medium hover:bg-[#f0eadc] transition">
           Mégse
         </button>
       </div>
@@ -402,85 +742,69 @@ function MovementForm({ initial, arenaSize, onSave, onCancel }) {
   );
 }
 
-// ────────────────────────────────────────────────────────────
-// MOZGÁS LISTA ELEM
-// ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+// MOZGÁS LISTA
+// ════════════════════════════════════════════════════════════
 function describeMovement(m) {
   const t = MOVEMENT_TYPES.find(t => t.id === m.type);
   if (!t) return 'ismeretlen';
-  if (t.mode === 'circle' || t.mode === 'change_in_circle')
-    return `${t.name} – ${m.centerLetter}-nél`;
-  if (t.mode === 'diagonal')
-    return `${t.name} – ${m.startLetter}–X–${m.endLetter}`;
-  return `${t.name} – ${m.startLetter}–${m.endLetter}`;
+  switch (t.mode) {
+    case 'centerline':       return `Középen – ${CENTERLINE_OPTIONS.find(c => c.id === m.choice)?.label || ''}`;
+    case 'half_school':      return `Félpálya – ${HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice)?.label || ''}`;
+    case 'diagonal':         return `Átló – ${DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.label || ''}`;
+    case 'circle':
+    case 'change_in_circle': return `${t.name} – ${m.centerLetter}-nél`;
+    case 'half_diagonal':
+    case 'straight':         return `${t.name} – ${m.startLetter}–${m.endLetter}`;
+    default:                 return t.name;
+  }
 }
 
-function MovementListItem({ m, idx, total, isHi, onClick, onEdit, onDelete, onMoveUp, onMoveDown }) {
+function MovementListItem({ m, idx, total, isHi, isContinuous, onClick, onEdit, onDelete, onMoveUp, onMoveDown }) {
   const gait = GAITS.find(g => g.id === m.gait);
   return (
-    <div
-      onClick={onClick}
-      className={`group relative px-3 py-2.5 border-l-2 cursor-pointer transition ${
-        isHi
-          ? 'bg-[#f0eadc] border-forest'
-          : 'bg-transparent border-transparent hover:bg-[#f5f0e0]'
-      }`}
-      style={{ borderLeftColor: isHi ? gait?.color : 'transparent' }}
-    >
+    <div onClick={onClick}
+         className={`group relative px-3 py-2.5 border-l-2 cursor-pointer transition ${
+           isHi ? 'bg-[#f0eadc] border-forest' : 'bg-transparent border-transparent hover:bg-[#f5f0e0]'
+         }`}
+         style={{ borderLeftColor: isHi ? gait?.color : 'transparent' }}>
       <div className="flex items-start gap-2.5">
-        <div
-          className="flex-none w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold mt-0.5"
-          style={{
-            backgroundColor: '#faf6ec',
-            border: `1.5px solid ${gait?.color || '#5e5b54'}`,
-            color: gait?.color || '#5e5b54',
-          }}
-        >
+        <div className="flex-none w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold mt-0.5"
+             style={{ backgroundColor: '#faf6ec',
+                      border: `1.5px solid ${gait?.color || '#5e5b54'}`,
+                      color: gait?.color || '#5e5b54' }}>
           {idx + 1}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-medium text-charcoal leading-tight truncate">
+          <div className="text-[13px] font-medium text-charcoal leading-tight truncate flex items-center gap-1.5">
+            {!isContinuous && idx > 0 && (
+              <span title="Nem folytonos az előző mozgással">
+                <AlertCircle size={11} className="text-[#925a1a] flex-none" />
+              </span>
+            )}
             {describeMovement(m)}
           </div>
-          <div className="text-[11px] mt-0.5" style={{ color: gait?.color }}>
-            {gait?.name}
-          </div>
-          {m.notes && (
-            <div className="text-[11px] text-[#5e5b54] italic mt-1 line-clamp-2">
-              {m.notes}
-            </div>
-          )}
+          <div className="text-[11px] mt-0.5" style={{ color: gait?.color }}>{gait?.name}</div>
+          {m.notes && <div className="text-[11px] text-[#5e5b54] italic mt-1 line-clamp-2">{m.notes}</div>}
         </div>
         <div className="flex-none flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition">
-          <button
-            onClick={e => { e.stopPropagation(); onMoveUp(); }}
-            disabled={idx === 0}
-            className="p-1 rounded hover:bg-[#e8dfc8] disabled:opacity-30"
-            title="Előre"
-          >
+          <button onClick={e => { e.stopPropagation(); onMoveUp(); }} disabled={idx === 0}
+                  className="p-1 rounded hover:bg-[#e8dfc8] disabled:opacity-30" title="Előre">
             <ChevronUp size={12} />
           </button>
-          <button
-            onClick={e => { e.stopPropagation(); onMoveDown(); }}
-            disabled={idx === total - 1}
-            className="p-1 rounded hover:bg-[#e8dfc8] disabled:opacity-30"
-            title="Hátra"
-          >
+          <button onClick={e => { e.stopPropagation(); onMoveDown(); }} disabled={idx === total - 1}
+                  className="p-1 rounded hover:bg-[#e8dfc8] disabled:opacity-30" title="Hátra">
             <ChevronDown size={12} />
           </button>
         </div>
       </div>
       <div className="flex gap-2 mt-1.5 ml-9 opacity-0 group-hover:opacity-100 transition">
-        <button
-          onClick={e => { e.stopPropagation(); onEdit(); }}
-          className="text-[11px] text-[#5e5b54] hover:text-forest flex items-center gap-1"
-        >
+        <button onClick={e => { e.stopPropagation(); onEdit(); }}
+                className="text-[11px] text-[#5e5b54] hover:text-forest flex items-center gap-1">
           <Edit2 size={11} /> szerkeszt
         </button>
-        <button
-          onClick={e => { e.stopPropagation(); onDelete(); }}
-          className="text-[11px] text-[#5e5b54] hover:text-[#922c2c] flex items-center gap-1"
-        >
+        <button onClick={e => { e.stopPropagation(); onDelete(); }}
+                className="text-[11px] text-[#5e5b54] hover:text-[#922c2c] flex items-center gap-1">
           <Trash2 size={11} /> törlés
         </button>
       </div>
@@ -488,184 +812,142 @@ function MovementListItem({ m, idx, total, isHi, onClick, onEdit, onDelete, onMo
   );
 }
 
-// ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
 // FŐKOMPONENS
-// ────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
 export default function App() {
-  const [programs, setPrograms]               = useState([]);
-  const [currentId, setCurrentId]             = useState(null);
-  const [editing, setEditing]                 = useState(null);
-  const [showAll, setShowAll]                 = useState(true);
-  const [highlightedIdx, setHighlightedIdx]   = useState(null);
-  const [drawerOpen, setDrawerOpen]           = useState(false);
-  const [loaded, setLoaded]                   = useState(false);
-  const [savingState, setSavingState]         = useState('idle');
+  const [programs, setPrograms]             = useState([]);
+  const [currentId, setCurrentId]           = useState(null);
+  const [editing, setEditing]               = useState(null);
+  const [showAll, setShowAll]               = useState(true);
+  const [highlightedIdx, setHighlightedIdx] = useState(null);
+  const [drawerOpen, setDrawerOpen]         = useState(false);
+  const [loaded, setLoaded]                 = useState(false);
+  const [savingState, setSavingState]       = useState('idle');
   const fileInputRef = useRef(null);
 
-  // ─── Betöltés
   useEffect(() => {
     try {
       const list = listPrograms();
       list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
       if (list.length === 0) {
-        const demo = {
-          id: 'demo-' + Date.now().toString(36),
-          name: 'Új program',
-          arenaSize: '20x60',
-          level: '',
-          movements: [],
-          updatedAt: Date.now(),
+        const fresh = {
+          id: Date.now().toString(36),
+          name: 'Új program', arenaSize: '20x40', level: '',
+          movements: [], updatedAt: Date.now(),
         };
-        list.push(demo);
-        saveProgram(demo);
+        list.push(fresh); saveProgram(fresh);
       }
       setPrograms(list);
       setCurrentId(list[0].id);
-    } catch (e) {
-      console.error('storage load failed', e);
-    } finally {
-      setLoaded(true);
-    }
+    } finally { setLoaded(true); }
   }, []);
 
-  const current = useMemo(
-    () => programs.find(p => p.id === currentId),
-    [programs, currentId]
-  );
+  const current = useMemo(() => programs.find(p => p.id === currentId), [programs, currentId]);
 
-  // ─── Mentés debounce
   useEffect(() => {
     if (!loaded || !current) return;
     setSavingState('saving');
     const t = setTimeout(() => {
-      try {
-        saveProgram(current);
-        setSavingState('saved');
-        setTimeout(() => setSavingState('idle'), 1200);
-      } catch (e) {
-        console.error('storage save failed', e);
-        setSavingState('idle');
-      }
+      try { saveProgram(current); setSavingState('saved'); setTimeout(() => setSavingState('idle'), 1200); }
+      catch { setSavingState('idle'); }
     }, 400);
     return () => clearTimeout(t);
   }, [current, loaded]);
 
+  const continuityFlags = useMemo(() => {
+    if (!current?.movements) return [];
+    return current.movements.map((m, idx) => {
+      if (idx === 0) return true;
+      const prevEnd  = getMovementEnd(current.movements[idx - 1]);
+      const currStart = getMovementStart(m);
+      return prevEnd === currStart;
+    });
+  }, [current]);
+
+  const previousEndLetter = useMemo(() => {
+    if (!current) return null;
+    const ms = current.movements || [];
+    if (editing?.mode === 'edit') {
+      return editing.idx > 0 ? getMovementEnd(ms[editing.idx - 1]) : null;
+    }
+    return ms.length > 0 ? getMovementEnd(ms[ms.length - 1]) : null;
+  }, [current, editing]);
+
   function updateCurrent(patch) {
-    setPrograms(ps => ps.map(p =>
-      p.id === currentId ? { ...p, ...patch, updatedAt: Date.now() } : p
-    ));
+    setPrograms(ps => ps.map(p => p.id === currentId ? { ...p, ...patch, updatedAt: Date.now() } : p));
   }
-
   function newProgram() {
-    const p = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
-      name: 'Új program',
-      arenaSize: '20x60',
-      level: '',
-      movements: [],
-      updatedAt: Date.now(),
-    };
-    setPrograms(ps => [p, ...ps]);
-    setCurrentId(p.id);
-    setHighlightedIdx(null);
-    setDrawerOpen(false);
+    const p = { id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+                name: 'Új program', arenaSize: '20x40', level: '',
+                movements: [], updatedAt: Date.now() };
+    setPrograms(ps => [p, ...ps]); setCurrentId(p.id);
+    setHighlightedIdx(null); setDrawerOpen(false);
   }
-
   function deleteProgram(id) {
     if (!confirm('Biztosan törlöd ezt a programot?')) return;
     deleteStoredProgram(id);
     setPrograms(ps => {
       const filtered = ps.filter(p => p.id !== id);
       if (filtered.length === 0) {
-        const fresh = {
-          id: Date.now().toString(36),
-          name: 'Új program',
-          arenaSize: '20x60',
-          level: '',
-          movements: [],
-          updatedAt: Date.now(),
-        };
-        saveProgram(fresh);
-        setCurrentId(fresh.id);
-        return [fresh];
+        const fresh = { id: Date.now().toString(36), name: 'Új program', arenaSize: '20x40',
+                        level: '', movements: [], updatedAt: Date.now() };
+        saveProgram(fresh); setCurrentId(fresh.id); return [fresh];
       }
       if (id === currentId) setCurrentId(filtered[0].id);
       return filtered;
     });
   }
-
   function duplicateProgram() {
     if (!current) return;
-    const copy = {
-      ...current,
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
-      name: current.name + ' (másolat)',
-      updatedAt: Date.now(),
-    };
-    setPrograms(ps => [copy, ...ps]);
-    setCurrentId(copy.id);
+    const copy = { ...current, id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+                   name: current.name + ' (másolat)', updatedAt: Date.now() };
+    setPrograms(ps => [copy, ...ps]); setCurrentId(copy.id);
   }
-
   function addMovement(m) {
     updateCurrent({ movements: [...(current.movements || []), m] });
     setEditing(null);
     setHighlightedIdx((current.movements || []).length);
   }
-
   function updateMovement(idx, m) {
-    const list = [...(current.movements || [])];
-    list[idx] = m;
-    updateCurrent({ movements: list });
-    setEditing(null);
+    const list = [...(current.movements || [])]; list[idx] = m;
+    updateCurrent({ movements: list }); setEditing(null);
   }
-
   function deleteMovement(idx) {
     const list = (current.movements || []).filter((_, i) => i !== idx);
     updateCurrent({ movements: list });
     if (highlightedIdx === idx) setHighlightedIdx(null);
   }
-
   function moveMovement(idx, dir) {
     const list = [...(current.movements || [])];
-    const newIdx = idx + dir;
-    if (newIdx < 0 || newIdx >= list.length) return;
-    [list[idx], list[newIdx]] = [list[newIdx], list[idx]];
+    const ni = idx + dir;
+    if (ni < 0 || ni >= list.length) return;
+    [list[idx], list[ni]] = [list[ni], list[idx]];
     updateCurrent({ movements: list });
-    if (highlightedIdx === idx) setHighlightedIdx(newIdx);
-    else if (highlightedIdx === newIdx) setHighlightedIdx(idx);
+    if (highlightedIdx === idx) setHighlightedIdx(ni);
+    else if (highlightedIdx === ni) setHighlightedIdx(idx);
   }
-
   function exportJSON() {
     const blob = new Blob([JSON.stringify(current, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = (current.name || 'program').replace(/[^a-z0-9]+/gi, '_') + '.json';
-    a.click();
-    URL.revokeObjectURL(url);
+    a.href = url; a.download = (current.name || 'program').replace(/[^a-z0-9]+/gi, '_') + '.json';
+    a.click(); URL.revokeObjectURL(url);
   }
-
   function importJSON(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const file = e.target.files?.[0]; if (!file) return;
     const reader = new FileReader();
     reader.onload = ev => {
       try {
         const data = JSON.parse(ev.target.result);
-        const prog = {
-          ...data,
+        const prog = migrateProgram({ ...data,
           id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
-          updatedAt: Date.now(),
-        };
+          updatedAt: Date.now() });
         saveProgram(prog);
-        setPrograms(ps => [prog, ...ps]);
-        setCurrentId(prog.id);
-      } catch (err) {
-        alert('Hibás JSON fájl');
-      }
+        setPrograms(ps => [prog, ...ps]); setCurrentId(prog.id);
+      } catch { alert('Hibás JSON fájl'); }
     };
-    reader.readAsText(file);
-    e.target.value = '';
+    reader.readAsText(file); e.target.value = '';
   }
 
   if (!loaded || !current) {
@@ -678,184 +960,119 @@ export default function App() {
 
   return (
     <div className="w-full min-h-screen bg-cream font-body text-charcoal flex flex-col">
-
-      {/* ───── HEADER ───── */}
       <header className="no-print border-b border-[#d4c9a8] bg-[#f5f0e0]/60 backdrop-blur-sm sticky top-0 z-30">
         <div className="px-4 md:px-6 py-3 flex items-center gap-3">
-          <button
-            onClick={() => setDrawerOpen(true)}
-            className="md:hidden p-2 hover:bg-[#e8dfc8] rounded transition"
-            title="Programok"
-          >
+          <button onClick={() => setDrawerOpen(true)}
+                  className="md:hidden p-2 hover:bg-[#e8dfc8] rounded transition" title="Programok">
             <Folder size={18} />
           </button>
-
           <div className="flex-1 min-w-0 flex items-center gap-3">
             <div className="hidden sm:block text-2xl font-display font-semibold tracking-tight text-forest">
               Díjlovagló&nbsp;tervező
             </div>
             <div className="text-[#9a8e75] hidden sm:block">·</div>
-            <input
-              type="text"
-              value={current.name}
-              onChange={e => updateCurrent({ name: e.target.value })}
-              className="bg-transparent border-none outline-none text-base md:text-lg font-display italic text-charcoal flex-1 min-w-0 focus:bg-paper focus:px-2 focus:rounded transition"
-              placeholder="Program neve..."
-            />
+            <input type="text" value={current.name}
+                   onChange={e => updateCurrent({ name: e.target.value })}
+                   className="bg-transparent border-none outline-none text-base md:text-lg font-display italic text-charcoal flex-1 min-w-0 focus:bg-paper focus:px-2 focus:rounded transition"
+                   placeholder="Program neve..." />
           </div>
-
           <div className="hidden sm:flex items-center gap-1.5 text-xs text-[#5e5b54] mr-1">
             {savingState === 'saving' && <span className="italic">mentés...</span>}
             {savingState === 'saved'  && <span className="text-forest flex items-center gap-1"><Check size={12}/>mentve</span>}
           </div>
-
-          <button
-            onClick={() => window.print()}
-            className="hidden md:flex p-2 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]"
-            title="Nyomtatás"
-          >
+          <button onClick={() => window.print()} className="hidden md:flex p-2 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]" title="Nyomtatás">
             <Printer size={16} />
           </button>
-          <button
-            onClick={exportJSON}
-            className="hidden md:flex p-2 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]"
-            title="Export JSON"
-          >
+          <button onClick={exportJSON} className="hidden md:flex p-2 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]" title="Export JSON">
             <FileDown size={16} />
           </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="hidden md:flex p-2 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]"
-            title="Import JSON"
-          >
+          <button onClick={() => fileInputRef.current?.click()} className="hidden md:flex p-2 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]" title="Import JSON">
             <FileUp size={16} />
           </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json,application/json"
-            className="hidden"
-            onChange={importJSON}
-          />
+          <input ref={fileInputRef} type="file" accept=".json,application/json" className="hidden" onChange={importJSON} />
         </div>
-
         <div className="px-4 md:px-6 pb-3 flex flex-wrap items-center gap-2 text-sm">
-          <select
-            value={current.arenaSize}
-            onChange={e => updateCurrent({ arenaSize: e.target.value })}
-            className="bg-paper border border-[#d4c9a8] rounded px-2 py-1 text-xs"
-          >
-            <option value="20x60">20×60 m (nagy pálya)</option>
-            <option value="20x40">20×40 m (kis pálya)</option>
-          </select>
-          <input
-            type="text"
-            value={current.level}
-            onChange={e => updateCurrent({ level: e.target.value })}
-            placeholder="Szint / kategória (pl. E, A, L, M)"
-            className="bg-paper border border-[#d4c9a8] rounded px-2 py-1 text-xs flex-1 min-w-[120px] max-w-[240px]"
-          />
-          <button
-            onClick={() => setShowAll(!showAll)}
-            className="ml-auto flex items-center gap-1.5 text-xs px-2 py-1 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]"
-          >
+          <span className="text-xs text-[#9a8e75] italic mr-2">20×40 m kis pálya</span>
+          <input type="text" value={current.level}
+                 onChange={e => updateCurrent({ level: e.target.value })}
+                 placeholder="Szint / kategória (pl. E, A, L, M)"
+                 className="bg-paper border border-[#d4c9a8] rounded px-2 py-1 text-xs flex-1 min-w-[120px] max-w-[240px]" />
+          <button onClick={() => setShowAll(!showAll)}
+                  className="ml-auto flex items-center gap-1.5 text-xs px-2 py-1 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]">
             {showAll ? <Eye size={13}/> : <EyeOff size={13}/>}
             {showAll ? 'Minden látszik' : 'Csak kiválasztott'}
           </button>
         </div>
       </header>
 
-      {/* ───── MAIN ───── */}
       <main className="flex-1 flex flex-col md:flex-row min-h-0">
-
-        {/* PROGRAMOK SIDEBAR – DESKTOP */}
         <aside className="no-print hidden md:flex flex-col w-56 border-r border-[#d4c9a8] bg-[#f5f0e0]/40">
           <div className="p-3 flex items-center justify-between border-b border-[#d4c9a8]">
             <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">Programok</div>
-            <button
-              onClick={newProgram}
-              className="p-1 hover:bg-[#e8dfc8] rounded transition text-forest"
-              title="Új program"
-            >
+            <button onClick={newProgram} className="p-1 hover:bg-[#e8dfc8] rounded transition text-forest" title="Új program">
               <Plus size={15} />
             </button>
           </div>
           <div className="flex-1 overflow-y-auto">
             {programs.map(p => (
-              <div
-                key={p.id}
-                onClick={() => { setCurrentId(p.id); setHighlightedIdx(null); }}
-                className={`group px-3 py-2 cursor-pointer border-l-2 transition ${
-                  p.id === currentId
-                    ? 'bg-[#f0eadc] border-forest'
-                    : 'border-transparent hover:bg-[#f5f0e0]'
-                }`}
-              >
+              <div key={p.id}
+                   onClick={() => { setCurrentId(p.id); setHighlightedIdx(null); }}
+                   className={`group px-3 py-2 cursor-pointer border-l-2 transition ${
+                     p.id === currentId ? 'bg-[#f0eadc] border-forest' : 'border-transparent hover:bg-[#f5f0e0]'
+                   }`}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-[13px] font-medium truncate font-display italic">{p.name}</div>
-                  <button
-                    onClick={e => { e.stopPropagation(); deleteProgram(p.id); }}
-                    className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-[#e8dfc8] rounded text-[#922c2c]"
-                  >
+                  <button onClick={e => { e.stopPropagation(); deleteProgram(p.id); }}
+                          className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-[#e8dfc8] rounded text-[#922c2c]">
                     <Trash2 size={12} />
                   </button>
                 </div>
-                <div className="text-[10px] text-[#9a8e75] mt-0.5">
-                  {p.movements?.length || 0} mozgás · {p.arenaSize}
-                </div>
+                <div className="text-[10px] text-[#9a8e75] mt-0.5">{p.movements?.length || 0} mozgás</div>
               </div>
             ))}
           </div>
           <div className="p-3 border-t border-[#d4c9a8]">
-            <button
-              onClick={duplicateProgram}
-              className="w-full text-xs text-[#5e5b54] hover:text-forest flex items-center justify-center gap-1.5 py-1.5"
-            >
+            <button onClick={duplicateProgram}
+                    className="w-full text-xs text-[#5e5b54] hover:text-forest flex items-center justify-center gap-1.5 py-1.5">
               <Copy size={12} /> Aktuális duplikálása
             </button>
           </div>
         </aside>
 
-        {/* ARÉNA – KÖZÉPSŐ */}
         <section className="flex-1 flex items-center justify-center p-4 md:p-6 min-h-[400px] print-arena">
-          <div className="w-full h-full max-w-md flex items-center justify-center" style={{ aspectRatio: current.arenaSize === '20x60' ? '20/60' : '20/40' }}>
-            <Arena
-              size={current.arenaSize}
-              movements={current.movements || []}
-              highlightedIdx={highlightedIdx}
-              showAll={showAll}
-            />
+          <div className="w-full h-full max-w-md flex items-center justify-center" style={{ aspectRatio: '20/40' }}>
+            <Arena movements={current.movements || []} highlightedIdx={highlightedIdx} showAll={showAll} />
           </div>
         </section>
 
-        {/* MOZGÁSOK – JOBB SIDEBAR (DESKTOP) */}
         <aside className="no-print hidden md:flex flex-col w-80 border-l border-[#d4c9a8] bg-[#f5f0e0]/30">
           <div className="p-3 flex items-center justify-between border-b border-[#d4c9a8]">
             <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">
               Mozgások · {current.movements?.length || 0}
             </div>
-            <button
-              onClick={() => setEditing({ mode: 'new' })}
-              className="flex items-center gap-1 px-2 py-1 bg-forest text-cream rounded text-xs font-medium hover:bg-[#2a4d3a] transition"
-            >
+            <button onClick={() => setEditing({ mode: 'new' })}
+                    className="flex items-center gap-1 px-2 py-1 bg-forest text-cream rounded text-xs font-medium hover:bg-[#2a4d3a] transition">
               <Plus size={13} /> Új
             </button>
           </div>
-
           {editing && (
             <div className="p-3 border-b border-[#d4c9a8] bg-paper">
               <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium mb-2">
                 {editing.mode === 'new' ? 'Új mozgás' : `${editing.idx + 1}. mozgás szerkesztése`}
+                {previousEndLetter && (
+                  <span className="ml-2 normal-case font-normal text-[#9a8e75] tracking-normal">
+                    (előző végpont: <strong>{previousEndLetter}</strong>)
+                  </span>
+                )}
               </div>
               <MovementForm
                 initial={editing.mode === 'edit' ? current.movements[editing.idx] : null}
-                arenaSize={current.arenaSize}
+                previousEndLetter={previousEndLetter}
                 onSave={m => editing.mode === 'new' ? addMovement(m) : updateMovement(editing.idx, m)}
                 onCancel={() => setEditing(null)}
               />
             </div>
           )}
-
           <div className="flex-1 overflow-y-auto">
             {(current.movements || []).length === 0 && !editing && (
               <div className="p-6 text-center text-[#9a8e75]">
@@ -866,11 +1083,9 @@ export default function App() {
             )}
             {(current.movements || []).map((m, idx) => (
               <MovementListItem
-                key={m.id}
-                m={m}
-                idx={idx}
-                total={current.movements.length}
+                key={m.id} m={m} idx={idx} total={current.movements.length}
                 isHi={highlightedIdx === idx}
+                isContinuous={continuityFlags[idx]}
                 onClick={() => setHighlightedIdx(highlightedIdx === idx ? null : idx)}
                 onEdit={() => setEditing({ mode: 'edit', idx })}
                 onDelete={() => deleteMovement(idx)}
@@ -881,24 +1096,26 @@ export default function App() {
           </div>
         </aside>
 
-        {/* MOBIL: MOZGÁSOK ALATT */}
         <section className="md:hidden border-t border-[#d4c9a8]">
           <div className="px-4 py-2 flex items-center justify-between border-b border-[#d4c9a8] bg-[#f5f0e0]/40">
             <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">
               Mozgások · {current.movements?.length || 0}
             </div>
-            <button
-              onClick={() => setEditing({ mode: 'new' })}
-              className="flex items-center gap-1 px-2 py-1 bg-forest text-cream rounded text-xs font-medium"
-            >
+            <button onClick={() => setEditing({ mode: 'new' })}
+                    className="flex items-center gap-1 px-2 py-1 bg-forest text-cream rounded text-xs font-medium">
               <Plus size={13} /> Új
             </button>
           </div>
           {editing && (
             <div className="p-3 border-b border-[#d4c9a8] bg-paper">
+              {previousEndLetter && (
+                <div className="text-[11px] text-[#9a8e75] italic mb-2">
+                  (előző végpont: <strong>{previousEndLetter}</strong>)
+                </div>
+              )}
               <MovementForm
                 initial={editing.mode === 'edit' ? current.movements[editing.idx] : null}
-                arenaSize={current.arenaSize}
+                previousEndLetter={previousEndLetter}
                 onSave={m => editing.mode === 'new' ? addMovement(m) : updateMovement(editing.idx, m)}
                 onCancel={() => setEditing(null)}
               />
@@ -907,11 +1124,9 @@ export default function App() {
           <div>
             {(current.movements || []).map((m, idx) => (
               <MovementListItem
-                key={m.id}
-                m={m}
-                idx={idx}
-                total={current.movements.length}
+                key={m.id} m={m} idx={idx} total={current.movements.length}
                 isHi={highlightedIdx === idx}
+                isContinuous={continuityFlags[idx]}
                 onClick={() => setHighlightedIdx(highlightedIdx === idx ? null : idx)}
                 onEdit={() => setEditing({ mode: 'edit', idx })}
                 onDelete={() => deleteMovement(idx)}
@@ -923,7 +1138,6 @@ export default function App() {
         </section>
       </main>
 
-      {/* MOBIL DRAWER */}
       {drawerOpen && (
         <div className="md:hidden fixed inset-0 z-50 flex no-print">
           <div className="flex-1 bg-black/40" onClick={() => setDrawerOpen(false)} />
@@ -934,33 +1148,23 @@ export default function App() {
             </div>
             <div className="flex-1 overflow-y-auto">
               {programs.map(p => (
-                <div
-                  key={p.id}
-                  onClick={() => { setCurrentId(p.id); setHighlightedIdx(null); setDrawerOpen(false); }}
-                  className={`px-3 py-2.5 cursor-pointer border-l-2 ${
-                    p.id === currentId
-                      ? 'bg-[#f0eadc] border-forest'
-                      : 'border-transparent'
-                  }`}
-                >
+                <div key={p.id}
+                     onClick={() => { setCurrentId(p.id); setHighlightedIdx(null); setDrawerOpen(false); }}
+                     className={`px-3 py-2.5 cursor-pointer border-l-2 ${
+                       p.id === currentId ? 'bg-[#f0eadc] border-forest' : 'border-transparent'
+                     }`}>
                   <div className="text-sm font-medium font-display italic">{p.name}</div>
-                  <div className="text-[10px] text-[#9a8e75]">
-                    {p.movements?.length || 0} mozgás
-                  </div>
+                  <div className="text-[10px] text-[#9a8e75]">{p.movements?.length || 0} mozgás</div>
                 </div>
               ))}
             </div>
             <div className="p-3 border-t border-[#d4c9a8] space-y-2">
-              <button
-                onClick={newProgram}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-forest text-cream rounded text-sm"
-              >
+              <button onClick={newProgram}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-forest text-cream rounded text-sm">
                 <Plus size={14}/> Új program
               </button>
-              <button
-                onClick={() => { exportJSON(); setDrawerOpen(false); }}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-2 border border-[#d4c9a8] text-[#5e5b54] rounded text-sm"
-              >
+              <button onClick={() => { exportJSON(); setDrawerOpen(false); }}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 border border-[#d4c9a8] text-[#5e5b54] rounded text-sm">
                 <FileDown size={14}/> Export
               </button>
             </div>
