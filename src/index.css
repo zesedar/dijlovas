@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    background: #faf6ec;
+  }
+  body {
+    background: #faf6ec;
+    color: #1a1a18;
+    font-family: 'IBM Plex Sans', -apple-system, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Mobil alapértelmezett font-size, hogy a select / input ne zoomoljon iOS-on */
+  input, select, textarea {
+    font-size: 16px;
+  }
+}
+
+@layer utilities {
+  .font-display { font-family: 'Fraunces', Georgia, serif; }
+  .font-body    { font-family: 'IBM Plex Sans', -apple-system, sans-serif; }
+}
+
+/* Egyéni scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #faf6ec; }
+::-webkit-scrollbar-thumb { background: #d4c9a8; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #b8a778; }
+
+/* Nyomtatás */
+@media print {
+  .no-print { display: none !important; }
+  .print-arena { width: 60% !important; }
+  body { background: white; }
+}
