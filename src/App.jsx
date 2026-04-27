@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Plus, Trash2, Edit2, ChevronUp, ChevronDown, Copy, X, Eye, EyeOff, FileDown, FileUp, BookOpen, Folder, Printer, Check, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Edit2, ChevronUp, ChevronDown, Copy, X, Eye, EyeOff, FileDown, FileUp, BookOpen, Folder, Printer, Check, AlertCircle, Play, Pause, RotateCcw } from 'lucide-react';
 
 // ════════════════════════════════════════════════════════════
 // PÁLYAADATOK – csak 20×40 m kis pálya
@@ -120,33 +120,50 @@ function isImmediateReverse(typeId, pos, previousMovement) {
 function unavailableReasonForType(typeId, pos, previousMovement = null) {
   const td = MOVEMENT_TYPES.find(t => t.id === typeId);
   if (!td) return null;
-  if (isImmediateReverse(typeId, pos, previousMovement)) {
-    return 'rögtön visszafelé nem lehet';
-  }
+  let reason = null;
   switch (typeId) {
     case 'straight':
-      return null;
+      reason = null;
+      break;
     case 'centerline':
-      return (pos === 'A' || pos === 'C') ? null : 'csak A vagy C pontból';
+      reason = (pos === 'A' || pos === 'C') ? null : 'csak A vagy C pontból';
+      break;
     case 'half_school':
-      return (pos === 'E' || pos === 'B') ? null : 'csak E vagy B pontból';
+      reason = (pos === 'E' || pos === 'B') ? null : 'csak E vagy B pontból';
+      break;
     case 'small_circle_8':
     case 'small_circle_10':
     case 'small_circle_15':
-      return circleFitsAt(pos, td.diameter) ? null : 'kilógna a karámon kívül';
+      reason = circleFitsAt(pos, td.diameter) ? null : 'kilógna a karámon kívül';
+      break;
     case 'large_circle':
-      if (!LARGE_CIRCLE_STARTS.includes(pos)) return 'nagykör csak A, B, C vagy E pontból';
-      return circleFitsAt(pos, td.diameter) ? null : 'kilógna a karámon kívül';
+      reason = !LARGE_CIRCLE_STARTS.includes(pos)
+        ? 'nagykör csak A, B, C vagy E pontból'
+        : (circleFitsAt(pos, td.diameter) ? null : 'kilógna a karámon kívül');
+      break;
     case 'diagonal':
-      return VALID_DIAGONAL_STARTS.includes(pos) ? null : 'csak K, F, H vagy M pontból';
+      reason = VALID_DIAGONAL_STARTS.includes(pos) ? null : 'csak K, F, H vagy M pontból';
+      break;
     case 'half_diagonal':
-      return VALID_HALF_DIAGONAL_STARTS.includes(pos) ? null : 'csak M, H, K vagy F pontból';
+      reason = VALID_HALF_DIAGONAL_STARTS.includes(pos) ? null : 'csak M, H, K vagy F pontból';
+      break;
     case 'change_in_circle':
-      return ['A','C','E','B'].includes(pos) ? null : 'csak A, C, E vagy B pontból';
+      reason = ['A','C','E','B'].includes(pos) ? null : 'csak A, C, E vagy B pontból';
+      break;
     default:
-      return null;
+      reason = null;
   }
+  if (reason) return reason;
+  if (isImmediateReverse(typeId, pos, previousMovement)) {
+    return 'rögtön visszafelé nem lehet';
+  }
+  if (wouldTurnTooMuch(typeId, pos, previousMovement)) {
+    const angle = Math.round(getTurnAngleFromPrevious(typeId, pos, previousMovement));
+    return `${angle}°-os fordulat lenne; 90° alatt kell maradni`;
+  }
+  return null;
 }
+
 
 // Adott pontból elérhető-e az adott mozgástípus?
 function isTypeAvailableFrom(typeId, pos, previousMovement = null) {
@@ -207,6 +224,26 @@ const GAITS = [
   { id: 'canter_medium',    name: 'Középütemű vágta',   color: '#714813', dash: false },
   { id: 'canter_extended',  name: 'Nyújtott vágta',     color: '#5a360c', dash: false },
 ];
+
+const GAIT_SPEEDS_MPS = {
+  halt: 0,
+  walk_collected: 1.25,
+  walk_medium: 1.45,
+  walk_extended: 1.7,
+  walk_free: 1.55,
+  trot_collected: 3.0,
+  trot_working: 3.4,
+  trot_medium: 3.9,
+  trot_extended: 4.4,
+  canter_collected: 4.7,
+  canter_working: 5.2,
+  canter_medium: 5.8,
+  canter_extended: 6.5,
+};
+
+// A gyakorlatsor gyorsítottan fut, de a szakaszok egymáshoz képest időarányosak.
+const PLAYBACK_SPEED_MULTIPLIER = 3.5;
+
 
 // ════════════════════════════════════════════════════════════
 // LOCAL STORAGE
@@ -311,28 +348,26 @@ function getCircleCenter(letterPos, radius) {
 // ════════════════════════════════════════════════════════════
 // PATH GENERÁTOROK
 // ════════════════════════════════════════════════════════════
-function generateStraightPath(m) {
+function generateStraightPoints(m) {
   const start = LETTERS[m.startLetter];
   const end   = LETTERS[m.endLetter];
-  if (!start || !end) return '';
+  if (!start || !end) return [];
 
   const sInt = isInterior(m.startLetter);
   const eInt = isInterior(m.endLetter);
 
   // (1) Mindkettő belső – egyenes a középvonalon
-  if (sInt && eInt) return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
+  if (sInt && eInt) return [start, end];
 
   // (2) Mindkettő karám – karám mentén, sarkokon át
   if (!sInt && !eInt) {
     const cw  = perimeterPathBetween(m.startLetter, m.endLetter, 'cw');
     const ccw = perimeterPathBetween(m.startLetter, m.endLetter, 'ccw');
     const variant = m.variant || 'auto';
-    let chosen;
-    if      (variant === 'cw')  chosen = cw;
-    else if (variant === 'ccw') chosen = ccw;
-    else if (variant === 'alt') chosen = pathLength(cw) <= pathLength(ccw) ? ccw : cw;
-    else                        chosen = pathLength(cw) <= pathLength(ccw) ? cw : ccw;
-    return pointsToSvgPath(chosen);
+    if      (variant === 'cw')  return cw;
+    else if (variant === 'ccw') return ccw;
+    else if (variant === 'alt') return pathLength(cw) <= pathLength(ccw) ? ccw : cw;
+    return pathLength(cw) <= pathLength(ccw) ? cw : ccw;
   }
 
   // (3) Egyik belső, másik karám
@@ -352,9 +387,7 @@ function generateStraightPath(m) {
   }
 
   if (intermediateLetter === exteriorLetter) {
-    return sInt
-      ? `M ${interiorPoint.x} ${interiorPoint.y} L ${exteriorPoint.x} ${exteriorPoint.y}`
-      : `M ${exteriorPoint.x} ${exteriorPoint.y} L ${interiorPoint.x} ${interiorPoint.y}`;
+    return sInt ? [interiorPoint, exteriorPoint] : [exteriorPoint, interiorPoint];
   }
 
   const cw  = perimeterPathBetween(intermediateLetter, exteriorLetter, 'cw');
@@ -366,11 +399,13 @@ function generateStraightPath(m) {
   else if (variant === 'alt') perimChosen = pathLength(cw) <= pathLength(ccw) ? ccw : cw;
   else                        perimChosen = pathLength(cw) <= pathLength(ccw) ? cw : ccw;
 
-  const allPoints = sInt
+  return sInt
     ? [interiorPoint, ...perimChosen]
     : [...perimChosen.slice().reverse(), interiorPoint];
+}
 
-  return pointsToSvgPath(allPoints);
+function generateStraightPath(m) {
+  return pointsToSvgPath(generateStraightPoints(m));
 }
 
 function generateCenterlinePath(m) {
@@ -499,15 +534,219 @@ function getMovementMidpoint(m) {
   }
 }
 
+function interpolateArc(center, radius, startAngle, endAngle, segments = 32) {
+  const pts = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const a = startAngle + (endAngle - startAngle) * t;
+    pts.push({ x: center.x + Math.cos(a) * radius, y: center.y + Math.sin(a) * radius });
+  }
+  return pts;
+}
+
+function generateCirclePoints(m, diameter, segments = 96) {
+  if (!circleFitsAt(m.centerLetter, diameter)) return [];
+  const ctr = LETTERS[m.centerLetter];
+  if (!ctr) return [];
+  const r = diameter / 2;
+  const c = getCircleCenter(ctr, r);
+  return interpolateArc(c, r, Math.PI, Math.PI + Math.PI * 2, segments);
+}
+
+function generateChangeInCirclePoints(m) {
+  const ctr = LETTERS[m.centerLetter];
+  if (!ctr) return [];
+  const big = getCircleCenter(ctr, 10);
+  const horizontal = ctr.x === 10;
+  return horizontal
+    ? [
+        ...interpolateArc({ x: 15, y: big.y }, 5, Math.PI, 0, 24),
+        ...interpolateArc({ x: 5, y: big.y }, 5, 0, Math.PI, 24).slice(1),
+      ]
+    : [
+        ...interpolateArc({ x: big.x, y: big.y - 5 }, 5, -Math.PI / 2, Math.PI / 2, 24),
+        ...interpolateArc({ x: big.x, y: big.y + 5 }, 5, -Math.PI / 2, Math.PI / 2, 24).slice(1),
+      ];
+}
+
+function getMovementPoints(m) {
+  const t = MOVEMENT_TYPES.find(t => t.id === m.type);
+  if (!t) return [];
+  switch (t.mode) {
+    case 'straight':         return generateStraightPoints(m);
+    case 'centerline': {
+      const o = CENTERLINE_OPTIONS.find(c => c.id === m.choice);
+      return o ? [LETTERS[o.from], LETTERS[o.to]].filter(Boolean) : [];
+    }
+    case 'half_school': {
+      const o = HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice);
+      return o ? [LETTERS[o.from], LETTERS[o.to]].filter(Boolean) : [];
+    }
+    case 'diagonal': {
+      const o = DIAGONAL_OPTIONS.find(d => d.id === m.choice);
+      return o ? [LETTERS[o.from], LETTERS.X, LETTERS[o.to]].filter(Boolean) : [];
+    }
+    case 'half_diagonal': {
+      const o = HALF_DIAGONAL_OPTIONS.find(d => d.id === m.choice);
+      const startLetter = o?.from || m.startLetter;
+      const endLetter = o?.to || m.endLetter;
+      return [LETTERS[startLetter], LETTERS[endLetter]].filter(Boolean);
+    }
+    case 'circle':           return generateCirclePoints(m, t.diameter);
+    case 'change_in_circle': return generateChangeInCirclePoints(m);
+    default:                 return [];
+  }
+}
+
+function getLastVector(points) {
+  for (let i = points.length - 1; i > 0; i--) {
+    const dx = points[i].x - points[i - 1].x;
+    const dy = points[i].y - points[i - 1].y;
+    if (Math.hypot(dx, dy) > 0.001) return { x: dx, y: dy };
+  }
+  return null;
+}
+
+function getFirstVector(points) {
+  for (let i = 1; i < points.length; i++) {
+    const dx = points[i].x - points[i - 1].x;
+    const dy = points[i].y - points[i - 1].y;
+    if (Math.hypot(dx, dy) > 0.001) return { x: dx, y: dy };
+  }
+  return null;
+}
+
+function angleBetweenVectors(a, b) {
+  if (!a || !b) return null;
+  const al = Math.hypot(a.x, a.y);
+  const bl = Math.hypot(b.x, b.y);
+  if (!al || !bl) return null;
+  const dot = (a.x * b.x + a.y * b.y) / (al * bl);
+  const clamped = Math.max(-1, Math.min(1, dot));
+  return Math.acos(clamped) * 180 / Math.PI;
+}
+
+function getMovementEndVector(m) {
+  const t = MOVEMENT_TYPES.find(t => t.id === m.type);
+  if (!t || t.mode === 'circle' || t.mode === 'change_in_circle') return null;
+  return getLastVector(getMovementPoints(m));
+}
+
+function getMovementStartVector(m) {
+  return getFirstVector(getMovementPoints(m));
+}
+
+function buildAutoMovementForType(typeId, pos, gait = 'trot_working') {
+  const auto = autoParamsForType(typeId, pos, null);
+  return buildPayloadFromState({
+    type: typeId,
+    startLetter: pos,
+    endLetter: auto.endLetter || getDefaultEndFor(pos),
+    centerLetter: auto.centerLetter || pos,
+    choice: auto.choice || null,
+    variant: 'auto',
+    exitMode: 'centerline',
+    gait,
+    notes: '',
+  }, pos, 'angle-check');
+}
+
+function getTurnAngleFromPrevious(typeId, pos, previousMovement) {
+  if (!previousMovement || !['diagonal', 'half_diagonal'].includes(typeId)) return null;
+  if (getMovementEnd(previousMovement) !== pos) return null;
+  const prevVector = getMovementEndVector(previousMovement);
+  const nextVector = getMovementStartVector(buildAutoMovementForType(typeId, pos, previousMovement.gait));
+  return angleBetweenVectors(prevVector, nextVector);
+}
+
+function wouldTurnTooMuch(typeId, pos, previousMovement) {
+  const angle = getTurnAngleFromPrevious(typeId, pos, previousMovement);
+  return angle != null && angle >= 90;
+}
+
+function getMovementLengthMeters(m) {
+  return pathLength(getMovementPoints(m));
+}
+
+function getGaitSpeed(gaitId) {
+  return GAIT_SPEEDS_MPS[gaitId] ?? 3.4;
+}
+
+function getMovementDurationSeconds(m) {
+  if (m.gait === 'halt') return 2;
+  const speed = getGaitSpeed(m.gait);
+  const len = getMovementLengthMeters(m);
+  if (!speed || !len) return 1.5;
+  return Math.max(1.2, len / speed);
+}
+
+function buildPlaybackPlan(movements) {
+  let cursor = 0;
+  const segments = (movements || []).map((m, idx) => {
+    const duration = getMovementDurationSeconds(m);
+    const seg = { movement: m, idx, start: cursor, end: cursor + duration, duration };
+    cursor += duration;
+    return seg;
+  });
+  return { segments, totalDuration: cursor };
+}
+
+function getPlaybackMoment(plan, elapsed) {
+  if (!plan?.segments?.length) return { idx: null, movement: null, progress: 0 };
+  const clamped = Math.max(0, Math.min(elapsed, plan.totalDuration));
+  const seg = plan.segments.find(s => clamped >= s.start && clamped <= s.end) || plan.segments[plan.segments.length - 1];
+  const progress = seg.duration ? Math.max(0, Math.min(1, (clamped - seg.start) / seg.duration)) : 1;
+  return { idx: seg.idx, movement: seg.movement, progress };
+}
+
+function getPointAlongMovement(m, progress) {
+  const pts = getMovementPoints(m);
+  if (!pts.length) return null;
+  if (pts.length === 1) return pts[0];
+  const total = pathLength(pts);
+  if (!total) return pts[0];
+  let target = Math.max(0, Math.min(1, progress)) * total;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const seg = Math.hypot(b.x - a.x, b.y - a.y);
+    if (target <= seg) {
+      const t = seg ? target / seg : 0;
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    }
+    target -= seg;
+  }
+  return pts[pts.length - 1];
+}
+
+function formatDuration(seconds) {
+  const safe = Math.max(0, Math.round(seconds || 0));
+  const m = Math.floor(safe / 60);
+  const s = safe % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+
 // ════════════════════════════════════════════════════════════
 // SVG PÁLYA
 // ════════════════════════════════════════════════════════════
-function Arena({ movements, highlightedIdx, showAll, previewMovement }) {
+function Arena({
+  movements,
+  highlightedIdx,
+  showAll,
+  previewMovement,
+  playbackMovement,
+  playbackProgress = 0,
+  numberOffset = 0,
+  markerId = 'movement-arrow',
+  selectableLetters = [],
+  selectedLetter = null,
+  onLetterClick = null,
+}) {
   const padX = 4.5, padY = 4.5;
   return (
     <svg viewBox={`${-padX} ${-padY} ${20 + padX * 2} ${ARENA_LEN + padY * 2}`} className="w-full h-full" style={{ maxHeight: '100%' }}>
       <defs>
-        <marker id="movement-arrow" viewBox="0 0 4 4" refX="3.35" refY="2"
+        <marker id={markerId} viewBox="0 0 4 4" refX="3.35" refY="2"
                 markerWidth="4" markerHeight="4" orient="auto" markerUnits="strokeWidth">
           <path d="M 0 0 L 4 2 L 0 4 z" fill="context-stroke" />
         </marker>
@@ -536,7 +775,7 @@ function Arena({ movements, highlightedIdx, showAll, previewMovement }) {
                 strokeOpacity={(showAll && !isHi && highlightedIdx != null) ? 0.32 : 0.92}
                 strokeLinecap="round" strokeLinejoin="round"
                 strokeDasharray={dashed ? '0.7 0.4' : undefined}
-                markerEnd="url(#movement-arrow)" />
+                markerEnd={`url(#${markerId})`} />
         );
       })}
 
@@ -559,7 +798,7 @@ function Arena({ movements, highlightedIdx, showAll, previewMovement }) {
                   fontWeight="600" textAnchor="middle" dominantBaseline="central"
                   fill={color}
                   opacity={(showAll && !isHi && highlightedIdx != null) ? 0.6 : 1}>
-              {idx + 1}
+              {idx + 1 + numberOffset}
             </text>
           </g>
         );
@@ -577,11 +816,22 @@ function Arena({ movements, highlightedIdx, showAll, previewMovement }) {
                   strokeOpacity={0.7}
                   strokeLinecap="round" strokeLinejoin="round"
                   strokeDasharray="0.5 0.4"
-                  markerEnd="url(#movement-arrow)" />
+                  markerEnd={`url(#${markerId})`} />
             {start && (
               <circle cx={start.x} cy={start.y} r={0.7}
                       fill="#2e5f3e" fillOpacity={0.7} />
             )}
+          </g>
+        );
+      })()}
+
+      {playbackMovement && (() => {
+        const point = getPointAlongMovement(playbackMovement, playbackProgress);
+        if (!point) return null;
+        return (
+          <g>
+            <circle cx={point.x} cy={point.y} r={1.05} fill="#faf6ec" stroke="#1a1a18" strokeWidth="0.22" />
+            <circle cx={point.x} cy={point.y} r={0.48} fill="#1a1a18" />
           </g>
         );
       })()}
@@ -598,8 +848,12 @@ function Arena({ movements, highlightedIdx, showAll, previewMovement }) {
         else if (onShortA) ty = ARENA_LEN + 3;
         else if (onShortC) ty = -2.2;
         else if (onCenter) tx = 11.7;
+        const selectable = selectableLetters.includes(letter);
+        const selected = selectedLetter === letter;
         return (
-          <g key={letter}>
+          <g key={letter}
+             onClick={selectable ? () => onLetterClick?.(letter) : undefined}
+             style={{ cursor: selectable ? 'pointer' : 'default' }}>
             {!onCenter && (
               <line
                 x1={onLeft ? 0 : onRight ? 20 : pos.x}
@@ -609,12 +863,19 @@ function Arena({ movements, highlightedIdx, showAll, previewMovement }) {
                 stroke="#1a1a18" strokeWidth="0.12"
               />
             )}
+            {(selectable || selected) && (
+              <circle cx={tx} cy={ty} r={onCenter ? 1.75 : 2.15}
+                      fill={selected ? '#2e5f3e' : '#faf6ec'}
+                      fillOpacity={selected ? 0.18 : 0.01}
+                      stroke={selected ? '#2e5f3e' : '#d4c9a8'}
+                      strokeWidth="0.14" />
+            )}
             <text x={tx} y={ty}
                   fontSize={onCenter ? 2 : 2.6}
                   fontFamily="'Fraunces', Georgia, serif"
                   fontWeight={onCenter ? 500 : 700}
                   textAnchor="middle" dominantBaseline="central"
-                  fill={onCenter ? '#9a8e75' : '#1a1a18'}
+                  fill={selected ? '#2e5f3e' : (onCenter ? '#9a8e75' : '#1a1a18')}
                   fontStyle={onCenter ? 'italic' : 'normal'}>
               {letter}
             </text>
@@ -662,7 +923,7 @@ function buildPayloadFromState(state, currentPos, initialId) {
   return payload;
 }
 
-function MovementForm({ initial, currentPos, previousMovement, defaultGait, onSave, onCancel, onPreview }) {
+function MovementForm({ initial, currentPos, previousMovement, defaultGait, letterPickRequest, onSave, onCancel, onPreview }) {
   const letterKeys = Object.keys(LETTERS);
 
   // A szerkesztett mozgás kezdőpontja: ha edit módban van, az initial-ből, egyébként a currentPos
@@ -701,12 +962,25 @@ function MovementForm({ initial, currentPos, previousMovement, defaultGait, onSa
   // Form bezáráskor töröljük a preview-t
   useEffect(() => () => { if (onPreview) onPreview(null); }, []);
 
+  useEffect(() => {
+    if (!letterPickRequest || typeDef?.mode !== 'straight') return;
+    const letter = letterPickRequest.letter;
+    if (letter && letter !== effectivePos && LETTERS[letter]) {
+      update({ endLetter: letter });
+    }
+  }, [letterPickRequest?.nonce]);
+
   function handleSelectType(newType) {
     const updates = autoParamsForType(newType, effectivePos, state);
     update(updates);
   }
 
   function handleSave() {
+    const reason = unavailableReasonForType(state.type, effectivePos, previousMovement);
+    if (reason) {
+      alert(`Ezt a szakaszt innen nem lehet menteni: ${reason}`);
+      return;
+    }
     onSave(buildPayloadFromState(state, effectivePos, initial?.id));
   }
 
@@ -781,6 +1055,21 @@ function MovementForm({ initial, currentPos, previousMovement, defaultGait, onSa
                   <option key={k} value={k}>{k}{isInterior(k) ? ' (belső)' : ''}</option>
                 ))}
               </select>
+              <div className="grid grid-cols-6 gap-1.5 mt-2">
+                {letterKeys.filter(k => k !== effectivePos).map(k => (
+                  <button key={k} type="button" onClick={() => update({ endLetter: k })}
+                          className={`py-1 rounded border text-xs font-display font-semibold transition ${
+                            state.endLetter === k
+                              ? 'bg-forest text-cream border-forest'
+                              : 'bg-paper border-[#d4c9a8] text-[#5e5b54] hover:bg-[#f0eadc]'
+                          }`}>
+                    {k}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-1 text-[10px] text-[#9a8e75] italic">
+                A pálya betűire is kattinthatsz a rajzon.
+              </div>
             </div>
 
             {straightInfo?.bothInterior && (
@@ -872,6 +1161,13 @@ function MovementForm({ initial, currentPos, previousMovement, defaultGait, onSa
           </div>
         )}
 
+        {unavailableReasonForType(state.type, effectivePos, previousMovement) && (
+          <div className="col-span-2 px-2.5 py-2 text-[12px] text-[#925a1a] bg-[#fff7df] border border-[#e6c778] rounded flex items-start gap-2">
+            <AlertCircle size={14} className="mt-0.5 flex-none" />
+            <span>{unavailableReasonForType(state.type, effectivePos, previousMovement)}</span>
+          </div>
+        )}
+
         <div className="col-span-2">
           <label className={labelClass}>Jármód</label>
           <select className={inputClass} value={state.gait} onChange={e => update({ gait: e.target.value })}>
@@ -889,7 +1185,8 @@ function MovementForm({ initial, currentPos, previousMovement, defaultGait, onSa
 
       <div className="flex gap-2 pt-1">
         <button onClick={handleSave}
-                className="flex-1 px-4 py-2.5 bg-forest text-cream rounded font-medium hover:bg-[#2a4d3a] transition flex items-center justify-center gap-2">
+                disabled={!!unavailableReasonForType(state.type, effectivePos, previousMovement)}
+                className="flex-1 px-4 py-2.5 bg-forest text-cream rounded font-medium hover:bg-[#2a4d3a] disabled:bg-[#b1a58e] disabled:cursor-not-allowed transition flex items-center justify-center gap-2">
           <Check size={16} />
           {initial ? 'Mentés' : 'Hozzáadás'}
         </button>
@@ -972,6 +1269,41 @@ function MovementListItem({ m, idx, total, isHi, isContinuous, onClick, onEdit, 
   );
 }
 
+function PrintView({ program }) {
+  const movements = program?.movements || [];
+  return (
+    <div className="print-only">
+      <div className="print-header">
+        <div className="print-title">{program?.name || 'Díjlovagló program'}</div>
+        <div className="print-subtitle">20×40 m kis pálya{program?.level ? ` · ${program.level}` : ''} · {movements.length} szakasz</div>
+      </div>
+      <div className="print-grid">
+        {movements.map((m, idx) => {
+          const gait = GAITS.find(g => g.id === m.gait);
+          return (
+            <div className="print-card" key={m.id || idx}>
+              <div className="print-card-arena">
+                <Arena
+                  movements={[m]}
+                  highlightedIdx={0}
+                  showAll={true}
+                  numberOffset={idx}
+                  markerId={`movement-arrow-print-${idx}`}
+                />
+              </div>
+              <div className="print-card-text">
+                <strong>{idx + 1}. {describeMovement(m)}</strong>
+                <span>{gait?.name || ''}</span>
+                {m.notes && <em>{m.notes}</em>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ════════════════════════════════════════════════════════════
 // FŐKOMPONENS
 // ════════════════════════════════════════════════════════════
@@ -986,6 +1318,9 @@ export default function App() {
   const [savingState, setSavingState]       = useState('idle');
   const [previewMovement, setPreviewMovement] = useState(null);
   const [lastGait, setLastGait] = useState('trot_working');
+  const [playback, setPlayback] = useState({ active: false, elapsed: 0 });
+  const [letterPickRequest, setLetterPickRequest] = useState(null);
+  const playbackFrameRef = useRef(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -1046,6 +1381,54 @@ export default function App() {
     if (editing.mode === 'edit') return editing.idx > 0 ? ms[editing.idx - 1] : null;
     return ms.length > 0 ? ms[ms.length - 1] : null;
   }, [current, editing]);
+
+  const playbackPlan = useMemo(() => buildPlaybackPlan(current?.movements || []), [current?.movements]);
+  const playbackMoment = useMemo(() => getPlaybackMoment(playbackPlan, playback.elapsed), [playbackPlan, playback.elapsed]);
+  const playbackHighlightIdx = playback.active || playback.elapsed > 0 ? playbackMoment.idx : highlightedIdx;
+  const playbackProgressPercent = playbackPlan.totalDuration
+    ? Math.min(100, (playback.elapsed / playbackPlan.totalDuration) * 100)
+    : 0;
+
+  const arenaLetterPicking = editing && previewMovement && MOVEMENT_TYPES.find(t => t.id === previewMovement.type)?.mode === 'straight';
+  const arenaSelectableLetters = arenaLetterPicking
+    ? Object.keys(LETTERS).filter(k => k !== getMovementStart(previewMovement))
+    : [];
+  const arenaSelectedLetter = arenaLetterPicking ? getMovementEnd(previewMovement) : null;
+
+  useEffect(() => {
+    setPlayback({ active: false, elapsed: 0 });
+  }, [currentId]);
+
+  useEffect(() => {
+    if (!playback.active) return;
+    let lastTs = performance.now();
+    const step = (ts) => {
+      const delta = Math.max(0, (ts - lastTs) / 1000) * PLAYBACK_SPEED_MULTIPLIER;
+      lastTs = ts;
+      setPlayback(prev => {
+        const nextElapsed = Math.min(prev.elapsed + delta, playbackPlan.totalDuration || 0);
+        return { active: nextElapsed < (playbackPlan.totalDuration || 0), elapsed: nextElapsed };
+      });
+      playbackFrameRef.current = requestAnimationFrame(step);
+    };
+    playbackFrameRef.current = requestAnimationFrame(step);
+    return () => {
+      if (playbackFrameRef.current) cancelAnimationFrame(playbackFrameRef.current);
+    };
+  }, [playback.active, playbackPlan.totalDuration]);
+
+  function togglePlayback() {
+    if (!playbackPlan.totalDuration) return;
+    setEditing(null);
+    setPlayback(prev => {
+      const atEnd = prev.elapsed >= playbackPlan.totalDuration;
+      return { active: !prev.active, elapsed: atEnd ? 0 : prev.elapsed };
+    });
+  }
+
+  function resetPlayback() {
+    setPlayback({ active: false, elapsed: 0 });
+  }
 
   // Preview törlése amikor bezárul a form
   useEffect(() => {
@@ -1141,6 +1524,26 @@ export default function App() {
 
   return (
     <div className="w-full min-h-screen bg-cream font-body text-charcoal flex flex-col">
+      <style>{`
+        @media screen { .print-only { display: none !important; } }
+        @media print {
+          @page { size: A4; margin: 10mm; }
+          body { background: #ffffff !important; }
+          .no-print, header, aside, main, .print-arena { display: none !important; }
+          .print-only { display: block !important; color: #1a1a18; }
+          .print-header { margin-bottom: 8mm; border-bottom: 1px solid #d4c9a8; padding-bottom: 4mm; }
+          .print-title { font-family: Georgia, serif; font-size: 22px; font-weight: 700; }
+          .print-subtitle { font-size: 11px; color: #5e5b54; margin-top: 2mm; }
+          .print-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5mm; }
+          .print-card { break-inside: avoid; border: 1px solid #d4c9a8; border-radius: 3mm; padding: 3mm; background: #faf6ec; }
+          .print-card-arena { width: 100%; aspect-ratio: 20 / 40; max-height: 78mm; margin: 0 auto 2mm; }
+          .print-card-text { font-size: 9px; line-height: 1.3; display: flex; flex-direction: column; gap: 1mm; }
+          .print-card-text strong { font-size: 10px; }
+          .print-card-text span { color: #5e5b54; }
+          .print-card-text em { color: #5e5b54; }
+        }
+      `}</style>
+      <PrintView program={current} />
       <header className="no-print border-b border-[#d4c9a8] bg-[#f5f0e0]/60 backdrop-blur-sm sticky top-0 z-30">
         <div className="px-4 md:px-6 py-3 flex items-center gap-3">
           <button onClick={() => setDrawerOpen(true)}
@@ -1178,11 +1581,33 @@ export default function App() {
                  onChange={e => updateCurrent({ level: e.target.value })}
                  placeholder="Szint / kategória (pl. E, A, L, M)"
                  className="bg-paper border border-[#d4c9a8] rounded px-2 py-1 text-xs flex-1 min-w-[120px] max-w-[240px]" />
+          <div className="ml-auto flex items-center gap-1.5">
+            <button onClick={togglePlayback}
+                    disabled={(current.movements || []).length === 0}
+                    className="flex items-center gap-1.5 text-xs px-2 py-1 bg-forest text-cream rounded transition hover:bg-[#2a4d3a] disabled:bg-[#b1a58e] disabled:cursor-not-allowed">
+              {playback.active ? <Pause size={13}/> : <Play size={13}/>}
+              {playback.active ? 'Szünet' : 'Lejátszás'}
+            </button>
+            {(playback.elapsed > 0 || playback.active) && (
+              <button onClick={resetPlayback}
+                      className="flex items-center gap-1 text-xs px-2 py-1 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]" title="Lejátszás nullázása">
+                <RotateCcw size={13}/>
+              </button>
+            )}
+          </div>
           <button onClick={() => setShowAll(!showAll)}
-                  className="ml-auto flex items-center gap-1.5 text-xs px-2 py-1 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]">
+                  className="flex items-center gap-1.5 text-xs px-2 py-1 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]">
             {showAll ? <Eye size={13}/> : <EyeOff size={13}/>}
             {showAll ? 'Minden látszik' : 'Csak kiválasztott'}
           </button>
+          {(playback.elapsed > 0 || playback.active) && (
+            <div className="basis-full flex items-center gap-2 text-[11px] text-[#5e5b54] mt-1">
+              <div className="h-1.5 flex-1 bg-[#e8dfc8] rounded-full overflow-hidden">
+                <div className="h-full bg-forest" style={{ width: `${playbackProgressPercent}%` }} />
+              </div>
+              <span className="tabular-nums">{formatDuration(playback.elapsed)} / {formatDuration(playbackPlan.totalDuration)}</span>
+            </div>
+          )}
         </div>
       </header>
 
@@ -1222,7 +1647,17 @@ export default function App() {
 
         <section className="flex-1 flex items-center justify-center p-4 md:p-6 min-h-[400px] print-arena">
           <div className="w-full h-full max-w-md flex items-center justify-center" style={{ aspectRatio: '20/40' }}>
-            <Arena movements={current.movements || []} highlightedIdx={highlightedIdx} showAll={showAll} previewMovement={previewMovement} />
+            <Arena
+              movements={current.movements || []}
+              highlightedIdx={playbackHighlightIdx}
+              showAll={playback.active || playback.elapsed > 0 ? true : showAll}
+              previewMovement={previewMovement}
+              playbackMovement={(playback.active || playback.elapsed > 0) ? playbackMoment.movement : null}
+              playbackProgress={playbackMoment.progress}
+              selectableLetters={arenaSelectableLetters}
+              selectedLetter={arenaSelectedLetter}
+              onLetterClick={letter => setLetterPickRequest({ letter, nonce: Date.now() })}
+            />
           </div>
         </section>
 
@@ -1231,7 +1666,7 @@ export default function App() {
             <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">
               Mozgások · {current.movements?.length || 0}
             </div>
-            <button onClick={() => setEditing({ mode: 'new', seed: Date.now().toString(36) })}
+            <button onClick={() => { resetPlayback(); setEditing({ mode: 'new', seed: Date.now().toString(36) }); }}
                     className="flex items-center gap-1 px-2 py-1 bg-forest text-cream rounded text-xs font-medium hover:bg-[#2a4d3a] transition">
               <Plus size={13} /> Új
             </button>
@@ -1247,6 +1682,7 @@ export default function App() {
                 currentPos={currentPos}
                 previousMovement={previousMovement}
                 defaultGait={lastGait}
+                letterPickRequest={letterPickRequest}
                 onSave={m => editing.mode === 'new' ? addMovement(m) : updateMovement(editing.idx, m)}
                 onCancel={() => setEditing(null)}
                 onPreview={setPreviewMovement}
@@ -1267,7 +1703,7 @@ export default function App() {
                 isHi={highlightedIdx === idx}
                 isContinuous={continuityFlags[idx]}
                 onClick={() => setHighlightedIdx(highlightedIdx === idx ? null : idx)}
-                onEdit={() => setEditing({ mode: 'edit', idx })}
+                onEdit={() => { resetPlayback(); setEditing({ mode: 'edit', idx }); }}
                 onDelete={() => deleteMovement(idx)}
                 onMoveUp={() => moveMovement(idx, -1)}
                 onMoveDown={() => moveMovement(idx, +1)}
@@ -1281,7 +1717,7 @@ export default function App() {
             <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">
               Mozgások · {current.movements?.length || 0}
             </div>
-            <button onClick={() => setEditing({ mode: 'new', seed: Date.now().toString(36) })}
+            <button onClick={() => { resetPlayback(); setEditing({ mode: 'new', seed: Date.now().toString(36) }); }}
                     className="flex items-center gap-1 px-2 py-1 bg-forest text-cream rounded text-xs font-medium">
               <Plus size={13} /> Új
             </button>
@@ -1294,6 +1730,7 @@ export default function App() {
                 currentPos={currentPos}
                 previousMovement={previousMovement}
                 defaultGait={lastGait}
+                letterPickRequest={letterPickRequest}
                 onSave={m => editing.mode === 'new' ? addMovement(m) : updateMovement(editing.idx, m)}
                 onCancel={() => setEditing(null)}
                 onPreview={setPreviewMovement}
@@ -1307,7 +1744,7 @@ export default function App() {
                 isHi={highlightedIdx === idx}
                 isContinuous={continuityFlags[idx]}
                 onClick={() => setHighlightedIdx(highlightedIdx === idx ? null : idx)}
-                onEdit={() => setEditing({ mode: 'edit', idx })}
+                onEdit={() => { resetPlayback(); setEditing({ mode: 'edit', idx }); }}
                 onDelete={() => deleteMovement(idx)}
                 onMoveUp={() => moveMovement(idx, -1)}
                 onMoveDown={() => moveMovement(idx, +1)}
