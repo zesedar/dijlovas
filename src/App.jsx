@@ -64,7 +64,16 @@ const DIAGONAL_OPTIONS = [
   { id: 'MXK', from: 'M', to: 'K', label: 'MXK (bal-felső → jobb-alsó)' },
 ];
 
+const HALF_DIAGONAL_OPTIONS = [
+  { id: 'M_E', from: 'M', to: 'E', label: 'M → E' },
+  { id: 'H_B', from: 'H', to: 'B', label: 'H → B' },
+  { id: 'K_B', from: 'K', to: 'B', label: 'K → B' },
+  { id: 'F_E', from: 'F', to: 'E', label: 'F → E' },
+];
+
 const VALID_DIAGONAL_STARTS = ['K', 'F', 'H', 'M'];
+const VALID_HALF_DIAGONAL_STARTS = ['M', 'H', 'K', 'F'];
+const LARGE_CIRCLE_STARTS = ['C', 'B', 'E', 'A'];
 
 // ════════════════════════════════════════════════════════════
 // KONTEXTUS-ÉRZÉKENY LOGIKA – mit lehet csinálni egy adott pontból
@@ -82,21 +91,66 @@ function getDefaultEndFor(pos) {
   return DEFAULT_NEXT[pos] || 'C';
 }
 
-// Adott pontból elérhető-e az adott mozgástípus?
-function isTypeAvailableFrom(typeId, pos) {
+function circleFitsAt(letter, diameter) {
+  const pos = LETTERS[letter];
+  if (!pos) return false;
+  const r = diameter / 2;
+  const c = getCircleCenter(pos, r);
+  return c.x - r >= 0 && c.x + r <= 20 && c.y - r >= 0 && c.y + r <= ARENA_LEN;
+}
+
+function getAutoEndForType(typeId, pos) {
+  if (typeId === 'diagonal') {
+    return DIAGONAL_OPTIONS.find(d => d.from === pos)?.to || null;
+  }
+  if (typeId === 'half_diagonal') {
+    return HALF_DIAGONAL_OPTIONS.find(d => d.from === pos)?.to || null;
+  }
+  return null;
+}
+
+function isImmediateReverse(typeId, pos, previousMovement) {
+  if (!['diagonal', 'half_diagonal'].includes(typeId) || !previousMovement) return false;
+  const prevStart = getMovementStart(previousMovement);
+  const prevEnd = getMovementEnd(previousMovement);
+  const candidateEnd = getAutoEndForType(typeId, pos);
+  return !!candidateEnd && prevEnd === pos && prevStart === candidateEnd;
+}
+
+function unavailableReasonForType(typeId, pos, previousMovement = null) {
+  const td = MOVEMENT_TYPES.find(t => t.id === typeId);
+  if (!td) return null;
+  if (isImmediateReverse(typeId, pos, previousMovement)) {
+    return 'rögtön visszafelé nem lehet';
+  }
   switch (typeId) {
-    case 'straight':         return true;
-    case 'centerline':       return pos === 'A' || pos === 'C';
-    case 'half_school':      return pos === 'E' || pos === 'B';
+    case 'straight':
+      return null;
+    case 'centerline':
+      return (pos === 'A' || pos === 'C') ? null : 'csak A vagy C pontból';
+    case 'half_school':
+      return (pos === 'E' || pos === 'B') ? null : 'csak E vagy B pontból';
     case 'small_circle_8':
     case 'small_circle_10':
     case 'small_circle_15':
-    case 'large_circle':     return true;
-    case 'diagonal':         return VALID_DIAGONAL_STARTS.includes(pos);
-    case 'half_diagonal':    return VALID_DIAGONAL_STARTS.includes(pos);
-    case 'change_in_circle': return ['A','C','E','B'].includes(pos);
-    default:                 return true;
+      return circleFitsAt(pos, td.diameter) ? null : 'kilógna a karámon kívül';
+    case 'large_circle':
+      if (!LARGE_CIRCLE_STARTS.includes(pos)) return 'nagykör csak A, B, C vagy E pontból';
+      return circleFitsAt(pos, td.diameter) ? null : 'kilógna a karámon kívül';
+    case 'diagonal':
+      return VALID_DIAGONAL_STARTS.includes(pos) ? null : 'csak K, F, H vagy M pontból';
+    case 'half_diagonal':
+      return VALID_HALF_DIAGONAL_STARTS.includes(pos) ? null : 'csak M, H, K vagy F pontból';
+    case 'change_in_circle':
+      return ['A','C','E','B'].includes(pos) ? null : 'csak A, C, E vagy B pontból';
+    default:
+      return null;
   }
+}
+
+// Adott pontból elérhető-e az adott mozgástípus?
+function isTypeAvailableFrom(typeId, pos, previousMovement = null) {
+  return unavailableReasonForType(typeId, pos, previousMovement) == null;
 }
 
 // Amikor a típust választjuk, a paraméterek automatikusan beállnak a kezdőpont szerint
@@ -111,10 +165,13 @@ function autoParamsForType(typeId, pos, prev) {
         ? prev.endLetter
         : getDefaultEndFor(pos);
       break;
-    case 'half_diagonal':
+    case 'half_diagonal': {
+      const opt = HALF_DIAGONAL_OPTIONS.find(d => d.from === pos);
       updates.startLetter = pos;
-      updates.endLetter   = pos === 'X' ? 'C' : 'X'; // sarokból X-be megy
+      updates.endLetter   = opt?.to || 'E';
+      updates.choice      = opt?.id || null;
       break;
+    }
     case 'centerline':
       updates.choice = pos === 'A' ? 'A_C' : 'C_A';
       break;
@@ -187,6 +244,9 @@ function migrateMovement(m) {
   }
   if (t.mode === 'diagonal' && !m.choice && m.startLetter && m.endLetter) {
     out.choice = DIAGONAL_OPTIONS.find(o => o.from === m.startLetter && o.to === m.endLetter)?.id || 'KXM';
+  }
+  if (t.mode === 'half_diagonal' && !m.choice && m.startLetter && m.endLetter) {
+    out.choice = HALF_DIAGONAL_OPTIONS.find(o => o.from === m.startLetter && o.to === m.endLetter)?.id || null;
   }
   return out;
 }
@@ -335,12 +395,16 @@ function generateDiagonalPath(m) {
 }
 
 function generateHalfDiagonalPath(m) {
-  const a = LETTERS[m.startLetter], b = LETTERS[m.endLetter];
+  const o = HALF_DIAGONAL_OPTIONS.find(d => d.id === m.choice);
+  const startLetter = o?.from || m.startLetter;
+  const endLetter = o?.to || m.endLetter;
+  const a = LETTERS[startLetter], b = LETTERS[endLetter];
   if (!a || !b) return '';
   return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
 }
 
 function generateCirclePath(m, diameter) {
+  if (!circleFitsAt(m.centerLetter, diameter)) return '';
   const ctr = LETTERS[m.centerLetter];
   if (!ctr) return '';
   const r = diameter / 2;
@@ -380,8 +444,8 @@ function getMovementStart(m) {
   const t = MOVEMENT_TYPES.find(t => t.id === m.type);
   if (!t) return null;
   switch (t.mode) {
-    case 'straight':
-    case 'half_diagonal':    return m.startLetter;
+    case 'straight':          return m.startLetter;
+    case 'half_diagonal':    return HALF_DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.from || m.startLetter;
     case 'centerline':       return CENTERLINE_OPTIONS.find(c => c.id === m.choice)?.from;
     case 'half_school':      return HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice)?.from;
     case 'diagonal':         return DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.from;
@@ -395,8 +459,8 @@ function getMovementEnd(m) {
   const t = MOVEMENT_TYPES.find(t => t.id === m.type);
   if (!t) return null;
   switch (t.mode) {
-    case 'straight':
-    case 'half_diagonal':    return m.endLetter;
+    case 'straight':          return m.endLetter;
+    case 'half_diagonal':    return HALF_DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.to || m.endLetter;
     case 'centerline':       return CENTERLINE_OPTIONS.find(c => c.id === m.choice)?.to;
     case 'half_school':      return HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice)?.to;
     case 'diagonal':         return DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.to;
@@ -412,7 +476,7 @@ function getMovementMidpoint(m) {
   switch (t.mode) {
     case 'straight':
     case 'half_diagonal': {
-      const a = LETTERS[m.startLetter], b = LETTERS[m.endLetter];
+      const a = LETTERS[getMovementStart(m)], b = LETTERS[getMovementEnd(m)];
       if (!a || !b) return null;
       return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     }
@@ -442,6 +506,12 @@ function Arena({ movements, highlightedIdx, showAll, previewMovement }) {
   const padX = 4.5, padY = 4.5;
   return (
     <svg viewBox={`${-padX} ${-padY} ${20 + padX * 2} ${ARENA_LEN + padY * 2}`} className="w-full h-full" style={{ maxHeight: '100%' }}>
+      <defs>
+        <marker id="movement-arrow" viewBox="0 0 4 4" refX="3.35" refY="2"
+                markerWidth="4" markerHeight="4" orient="auto" markerUnits="strokeWidth">
+          <path d="M 0 0 L 4 2 L 0 4 z" fill="context-stroke" />
+        </marker>
+      </defs>
       <rect x={-padX} y={-padY} width={20 + padX * 2} height={ARENA_LEN + padY * 2} fill="#faf6ec" />
       <rect x="0" y="0" width="20" height={ARENA_LEN} fill="#ffffff" stroke="#1a1a18" strokeWidth="0.18" />
       <rect x="1" y="1" width="18" height={ARENA_LEN - 2} fill="none" stroke="#d4c9a8" strokeWidth="0.05" strokeDasharray="0.6 0.4" />
@@ -465,7 +535,8 @@ function Arena({ movements, highlightedIdx, showAll, previewMovement }) {
                 strokeWidth={isHi ? 0.55 : 0.35}
                 strokeOpacity={(showAll && !isHi && highlightedIdx != null) ? 0.32 : 0.92}
                 strokeLinecap="round" strokeLinejoin="round"
-                strokeDasharray={dashed ? '0.7 0.4' : undefined} />
+                strokeDasharray={dashed ? '0.7 0.4' : undefined}
+                markerEnd="url(#movement-arrow)" />
         );
       })}
 
@@ -505,7 +576,8 @@ function Arena({ movements, highlightedIdx, showAll, previewMovement }) {
                   strokeWidth={0.55}
                   strokeOpacity={0.7}
                   strokeLinecap="round" strokeLinejoin="round"
-                  strokeDasharray="0.5 0.4" />
+                  strokeDasharray="0.5 0.4"
+                  markerEnd="url(#movement-arrow)" />
             {start && (
               <circle cx={start.x} cy={start.y} r={0.7}
                       fill="#2e5f3e" fillOpacity={0.7} />
@@ -580,6 +652,7 @@ function buildPayloadFromState(state, currentPos, initialId) {
     case 'half_diagonal':
       payload.startLetter = currentPos;
       payload.endLetter   = state.endLetter;
+      payload.choice      = state.choice;
       break;
     case 'circle':
     case 'change_in_circle':
@@ -589,7 +662,7 @@ function buildPayloadFromState(state, currentPos, initialId) {
   return payload;
 }
 
-function MovementForm({ initial, currentPos, onSave, onCancel, onPreview }) {
+function MovementForm({ initial, currentPos, previousMovement, defaultGait, onSave, onCancel, onPreview }) {
   const letterKeys = Object.keys(LETTERS);
 
   // A szerkesztett mozgás kezdőpontja: ha edit módban van, az initial-ből, egyébként a currentPos
@@ -610,7 +683,7 @@ function MovementForm({ initial, currentPos, onSave, onCancel, onPreview }) {
       choice:      auto.choice || null,
       variant:     'auto',
       exitMode:    'centerline',
-      gait:        'trot_working',
+      gait:        defaultGait || 'trot_working',
       notes:       '',
     };
   });
@@ -651,6 +724,11 @@ function MovementForm({ initial, currentPos, onSave, onCancel, onPreview }) {
     };
   }, [typeDef, effectivePos, state.endLetter]);
 
+  const orderedGaits = useMemo(() => {
+    const selected = GAITS.find(g => g.id === state.gait);
+    return selected ? [selected, ...GAITS.filter(g => g.id !== selected.id)] : GAITS;
+  }, [state.gait]);
+
   return (
     <div className="space-y-3">
       {/* AKTUÁLIS POZÍCIÓ – kiemelt badge */}
@@ -667,16 +745,31 @@ function MovementForm({ initial, currentPos, onSave, onCancel, onPreview }) {
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <label className={labelClass}>Mit csinálsz innen?</label>
-          <select className={inputClass} value={state.type} onChange={e => handleSelectType(e.target.value)}>
+          <div className="grid grid-cols-2 gap-2">
             {MOVEMENT_TYPES.map(t => {
-              const available = isTypeAvailableFrom(t.id, effectivePos);
+              const reason = unavailableReasonForType(t.id, effectivePos, previousMovement);
+              const available = reason == null;
+              const active = state.type === t.id;
               return (
-                <option key={t.id} value={t.id} disabled={!available}>
-                  {t.name}{!available ? '  — innen nem' : ''}
-                </option>
+                <button
+                  key={t.id}
+                  type="button"
+                  disabled={!available}
+                  title={reason || t.name}
+                  onClick={() => handleSelectType(t.id)}
+                  className={`px-2 py-2 rounded border text-left text-[11px] leading-tight transition ${
+                    active
+                      ? 'bg-forest text-cream border-forest'
+                      : available
+                        ? 'bg-paper border-[#d4c9a8] text-[#5e5b54] hover:bg-[#f0eadc]'
+                        : 'bg-[#eee7d7] border-[#d4c9a8] text-[#b1a58e] cursor-not-allowed'
+                  }`}>
+                  <span className="font-medium">{t.name}</span>
+                  {!available && <span className="block text-[10px] opacity-80 mt-0.5">{reason}</span>}
+                </button>
               );
             })}
-          </select>
+          </div>
         </div>
 
         {typeDef.mode === 'straight' && (
@@ -767,13 +860,9 @@ function MovementForm({ initial, currentPos, onSave, onCancel, onPreview }) {
         )}
 
         {typeDef.mode === 'half_diagonal' && (
-          <div className="col-span-2">
-            <label className={labelClass}>Félátló végpontja</label>
-            <select className={inputClass} value={state.endLetter} onChange={e => update({ endLetter: e.target.value })}>
-              {letterKeys.filter(k => k !== effectivePos).map(k => (
-                <option key={k} value={k}>{k}</option>
-              ))}
-            </select>
+          <div className="col-span-2 px-2.5 py-2 text-[12px] text-forest italic bg-[#f5f0e0] border border-[#d4c9a8] rounded">
+            <strong className="not-italic font-medium">Automatikus félátlóváltás:</strong>{' '}
+            {HALF_DIAGONAL_OPTIONS.find(d => d.id === state.choice)?.label || `${effectivePos} → ${state.endLetter}`}
           </div>
         )}
 
@@ -786,7 +875,7 @@ function MovementForm({ initial, currentPos, onSave, onCancel, onPreview }) {
         <div className="col-span-2">
           <label className={labelClass}>Jármód</label>
           <select className={inputClass} value={state.gait} onChange={e => update({ gait: e.target.value })}>
-            {GAITS.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+            {orderedGaits.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
         </div>
 
@@ -823,9 +912,9 @@ function describeMovement(m) {
     case 'centerline':       return `Középen – ${CENTERLINE_OPTIONS.find(c => c.id === m.choice)?.label || ''}`;
     case 'half_school':      return `Félpálya – ${HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice)?.label || ''}`;
     case 'diagonal':         return `Átló – ${DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.label || ''}`;
+    case 'half_diagonal':    return `Félátló – ${HALF_DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.label || `${m.startLetter} → ${m.endLetter}`}`;
     case 'circle':
     case 'change_in_circle': return `${t.name} – ${m.centerLetter}-nél`;
-    case 'half_diagonal':
     case 'straight':         return `${t.name} – ${m.startLetter}–${m.endLetter}`;
     default:                 return t.name;
   }
@@ -896,6 +985,7 @@ export default function App() {
   const [loaded, setLoaded]                 = useState(false);
   const [savingState, setSavingState]       = useState('idle');
   const [previewMovement, setPreviewMovement] = useState(null);
+  const [lastGait, setLastGait] = useState('trot_working');
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -916,6 +1006,11 @@ export default function App() {
   }, []);
 
   const current = useMemo(() => programs.find(p => p.id === currentId), [programs, currentId]);
+
+  useEffect(() => {
+    const last = current?.movements?.[current.movements.length - 1]?.gait;
+    if (last) setLastGait(last);
+  }, [currentId, current]);
 
   useEffect(() => {
     if (!loaded || !current) return;
@@ -943,6 +1038,13 @@ export default function App() {
       return editing.idx > 0 ? getMovementEnd(ms[editing.idx - 1]) : START_POSITION;
     }
     return ms.length > 0 ? getMovementEnd(ms[ms.length - 1]) : START_POSITION;
+  }, [current, editing]);
+
+  const previousMovement = useMemo(() => {
+    if (!current || !editing) return null;
+    const ms = current.movements || [];
+    if (editing.mode === 'edit') return editing.idx > 0 ? ms[editing.idx - 1] : null;
+    return ms.length > 0 ? ms[ms.length - 1] : null;
   }, [current, editing]);
 
   // Preview törlése amikor bezárul a form
@@ -981,12 +1083,15 @@ export default function App() {
     setPrograms(ps => [copy, ...ps]); setCurrentId(copy.id);
   }
   function addMovement(m) {
+    const nextIdx = (current.movements || []).length;
+    setLastGait(m.gait || lastGait);
     updateCurrent({ movements: [...(current.movements || []), m] });
-    setEditing(null);
-    setHighlightedIdx((current.movements || []).length);
+    setEditing({ mode: 'new', seed: m.id });
+    setHighlightedIdx(nextIdx);
   }
   function updateMovement(idx, m) {
     const list = [...(current.movements || [])]; list[idx] = m;
+    setLastGait(m.gait || lastGait);
     updateCurrent({ movements: list }); setEditing(null);
   }
   function deleteMovement(idx) {
@@ -1126,7 +1231,7 @@ export default function App() {
             <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">
               Mozgások · {current.movements?.length || 0}
             </div>
-            <button onClick={() => setEditing({ mode: 'new' })}
+            <button onClick={() => setEditing({ mode: 'new', seed: Date.now().toString(36) })}
                     className="flex items-center gap-1 px-2 py-1 bg-forest text-cream rounded text-xs font-medium hover:bg-[#2a4d3a] transition">
               <Plus size={13} /> Új
             </button>
@@ -1137,8 +1242,11 @@ export default function App() {
                 {editing.mode === 'new' ? 'Új mozgás' : `${editing.idx + 1}. mozgás szerkesztése`}
               </div>
               <MovementForm
+                key={`${editing.mode}-${editing.idx ?? 'new'}-${editing.seed ?? 'edit'}-${currentPos}`}
                 initial={editing.mode === 'edit' ? current.movements[editing.idx] : null}
                 currentPos={currentPos}
+                previousMovement={previousMovement}
+                defaultGait={lastGait}
                 onSave={m => editing.mode === 'new' ? addMovement(m) : updateMovement(editing.idx, m)}
                 onCancel={() => setEditing(null)}
                 onPreview={setPreviewMovement}
@@ -1173,7 +1281,7 @@ export default function App() {
             <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">
               Mozgások · {current.movements?.length || 0}
             </div>
-            <button onClick={() => setEditing({ mode: 'new' })}
+            <button onClick={() => setEditing({ mode: 'new', seed: Date.now().toString(36) })}
                     className="flex items-center gap-1 px-2 py-1 bg-forest text-cream rounded text-xs font-medium">
               <Plus size={13} /> Új
             </button>
@@ -1181,8 +1289,11 @@ export default function App() {
           {editing && (
             <div className="p-3 border-b border-[#d4c9a8] bg-paper">
               <MovementForm
+                key={`${editing.mode}-${editing.idx ?? 'new'}-${editing.seed ?? 'edit'}-${currentPos}`}
                 initial={editing.mode === 'edit' ? current.movements[editing.idx] : null}
                 currentPos={currentPos}
+                previousMovement={previousMovement}
+                defaultGait={lastGait}
                 onSave={m => editing.mode === 'new' ? addMovement(m) : updateMovement(editing.idx, m)}
                 onCancel={() => setEditing(null)}
                 onPreview={setPreviewMovement}
