@@ -877,18 +877,21 @@ function Arena({
   selectedLetter = null,
   onLetterClick = null,
 }) {
-  const padX = 4.5, padY = 4.5;
+  // Kisebb felső/alsó SVG-margó: a betűknek marad hely, de nem keletkezik nagy üres sáv a pálya felett.
+  const padX = 4.5;
+  const padTop = 3.4;
+  const padBottom = 4.1;
   const visibleSet = visibleIndices ? new Set(visibleIndices) : null;
   const shouldShowMovement = (idx) => visibleSet ? visibleSet.has(idx) : (showAll || idx === highlightedIdx);
   return (
-    <svg viewBox={`${-padX} ${-padY} ${20 + padX * 2} ${ARENA_LEN + padY * 2}`} className="block w-full h-full" style={{ maxHeight: '100%' }}>
+    <svg viewBox={`${-padX} ${-padTop} ${20 + padX * 2} ${ARENA_LEN + padTop + padBottom}`} className="block w-full h-full" style={{ maxHeight: '100%' }}>
       <defs>
         <marker id={markerId} viewBox="0 0 4 4" refX="3.35" refY="2"
                 markerWidth="4" markerHeight="4" orient="auto" markerUnits="strokeWidth">
           <path d="M 0 0 L 4 2 L 0 4 z" fill="context-stroke" />
         </marker>
       </defs>
-      <rect x={-padX} y={-padY} width={20 + padX * 2} height={ARENA_LEN + padY * 2} fill="#faf6ec" />
+      <rect x={-padX} y={-padTop} width={20 + padX * 2} height={ARENA_LEN + padTop + padBottom} fill="#faf6ec" />
       <rect x="0" y="0" width="20" height={ARENA_LEN} fill="#ffffff" stroke="#1a1a18" strokeWidth="0.18" />
       <rect x="1" y="1" width="18" height={ARENA_LEN - 2} fill="none" stroke="#d4c9a8" strokeWidth="0.05" strokeDasharray="0.6 0.4" />
       <line x1="10" y1="0" x2="10" y2={ARENA_LEN} stroke="#c9bfa3" strokeWidth="0.05" strokeDasharray="0.5 0.5" />
@@ -984,8 +987,8 @@ function Arena({
         let tx = pos.x, ty = pos.y;
         if (onLeft)        tx = -2.5;
         else if (onRight)  tx = 22.5;
-        else if (onShortA) ty = ARENA_LEN + 3;
-        else if (onShortC) ty = -2.2;
+        else if (onShortA) ty = ARENA_LEN + 2.6;
+        else if (onShortC) ty = -2.0;
         else if (onCenter) tx = 11.7;
         const selectable = selectableLetters.includes(letter);
         const selected = selectedLetter === letter;
@@ -998,7 +1001,7 @@ function Arena({
                 x1={onLeft ? 0 : onRight ? 20 : pos.x}
                 y1={onShortA ? ARENA_LEN : onShortC ? 0 : pos.y}
                 x2={onLeft ? -1.2 : onRight ? 21.2 : pos.x}
-                y2={onShortA ? ARENA_LEN + 1.2 : onShortC ? -1.2 : pos.y}
+                y2={onShortA ? ARENA_LEN + 1.0 : onShortC ? -1.0 : pos.y}
                 stroke="#1a1a18" strokeWidth="0.12"
               />
             )}
@@ -1921,8 +1924,8 @@ export default function App() {
           </div>
         </aside>
 
-        <section className="flex-1 flex items-center justify-center p-4 md:p-6 min-h-[400px] md:min-h-0 md:h-full md:overflow-hidden print-arena">
-          <div className="w-full max-w-md md:w-auto md:h-full md:max-h-full flex items-center justify-center" style={{ aspectRatio: '20 / 40' }}>
+        <section className="flex-1 flex items-start justify-center px-4 pt-1 pb-4 md:px-6 md:pt-2 md:pb-4 min-h-[400px] md:min-h-0 md:h-full md:overflow-hidden print-arena">
+          <div className="w-full max-w-md md:w-auto md:h-full md:max-h-full flex items-start justify-center" style={{ aspectRatio: '20 / 40' }}>
             <Arena
               movements={current.movements || []}
               highlightedIdx={playbackHighlightIdx ?? selectedDisplayIdx}
