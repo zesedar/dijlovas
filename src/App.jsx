@@ -1943,8 +1943,8 @@ export default function App() {
           </div>
         </section>
 
-        <aside className="no-print hidden md:flex flex-col w-80 border-l border-[#d4c9a8] bg-[#f5f0e0]/30">
-          <div className="p-3 flex items-center justify-between border-b border-[#d4c9a8]">
+        <aside className="no-print hidden md:flex flex-col w-80 border-l border-[#d4c9a8] bg-[#f5f0e0]/30 min-h-0 overflow-y-auto">
+          <div className="shrink-0 p-3 flex items-center justify-between border-b border-[#d4c9a8]">
             <div>
               <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">
                 Mozgások · {current.movements?.length || 0}
@@ -1953,7 +1953,7 @@ export default function App() {
             </div>
           </div>
           {editing && (
-            <div className="p-3 border-b border-[#d4c9a8] bg-paper">
+            <div className="shrink-0 p-3 border-b border-[#d4c9a8] bg-paper">
               <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium mb-2">
                 {editing.mode === 'new' ? 'Új mozgás' : `${editing.idx + 1}. mozgás szerkesztése`}
               </div>
@@ -1970,7 +1970,7 @@ export default function App() {
               />
             </div>
           )}
-          <div className="flex-1 overflow-y-auto">
+          <div className="shrink-0">
             {(current.movements || []).length === 0 && !editing && (
               <div className="p-6 text-center text-[#9a8e75]">
                 <BookOpen className="mx-auto mb-3 opacity-40" size={32} />
