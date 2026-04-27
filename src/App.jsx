@@ -651,21 +651,24 @@ function generateCirclePoints(m, diameter, segments = 96) {
   return pts;
 }
 
-function generateSemiCircleByDiameter(a, b, side = 1, segments = 32) {
+function generateSemiCircleByDiameter(a, b, side = 1, segments = 64) {
   if (!a || !b) return [];
   const dx = b.x - a.x, dy = b.y - a.y;
   const length = Math.hypot(dx, dy);
   if (!length) return [a];
-  const nx = -dy / length;
-  const ny = dx / length;
+
+  const center = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
   const r = length / 2;
+  const startAngle = Math.atan2(a.y - center.y, a.x - center.x);
+  const sweep = side >= 0 ? Math.PI : -Math.PI;
   const pts = [];
+
   for (let i = 0; i <= segments; i++) {
     const t = i / segments;
-    const bulge = Math.sin(Math.PI * t) * r * side;
+    const angle = startAngle + sweep * t;
     pts.push({
-      x: a.x + dx * t + nx * bulge,
-      y: a.y + dy * t + ny * bulge,
+      x: center.x + Math.cos(angle) * r,
+      y: center.y + Math.sin(angle) * r,
     });
   }
   return pts;
