@@ -76,7 +76,9 @@ const VALID_DIAGONAL_STARTS = ['K', 'F', 'H', 'M'];
 const VALID_HALF_DIAGONAL_STARTS = ['M', 'H', 'K', 'F'];
 const LARGE_CIRCLE_STARTS = ['C', 'B', 'E', 'A'];
 const HALF_LARGE_CIRCLE_STARTS = LARGE_CIRCLE_STARTS;
-const CHANGE_IN_CIRCLE_STARTS = LARGE_CIRCLE_STARTS;
+const CHANGE_IN_CIRCLE_STARTS = [...LARGE_CIRCLE_STARTS, 'X'];
+const CIRCLE_TYPES = ['small_circle_8', 'small_circle_10', 'small_circle_15', 'large_circle'];
+const TURN_LIMITED_TYPES = ['diagonal', 'half_diagonal', 'small_circle_8', 'small_circle_10', 'small_circle_15', 'large_circle', 'half_large_circle', 'change_in_circle'];
 
 // ════════════════════════════════════════════════════════════
 // KONTEXTUS-ÉRZÉKENY LOGIKA – mit lehet csinálni egy adott pontból
@@ -97,9 +99,86 @@ function getDefaultEndFor(pos) {
 function circleFitsAt(letter, diameter) {
   const pos = LETTERS[letter];
   if (!pos) return false;
+  if (letter === 'X') return diameter <= 20;
   const r = diameter / 2;
   const c = getCircleCenter(pos, r);
   return c.x - r >= 0 && c.x + r <= 20 && c.y - r >= 0 && c.y + r <= ARENA_LEN;
+}
+
+function oppositeWallLetter(letter) {
+  return { A: 'C', C: 'A', B: 'E', E: 'B' }[letter] || null;
+}
+
+function getCircleLikeEndLetter(typeId, pos, previousMovement = null) {
+  if (CIRCLE_TYPES.includes(typeId)) return pos;
+  if (typeId === 'half_large_circle') {
+    if (pos === 'A' || pos === 'C') return 'X';
+    if (pos === 'B' || pos === 'E') return oppositeWallLetter(pos);
+    return pos;
+  }
+  if (typeId === 'change_in_circle') {
+    if (pos === 'A' || pos === 'C') return 'X';
+    if (pos === 'B' || pos === 'E') return oppositeWallLetter(pos);
+    if (pos === 'X') {
+      const prevStart = previousMovement ? getMovementStart(previousMovement) : null;
+      return oppositeWallLetter(prevStart) || 'C';
+    }
+  }
+  return pos;
+}
+
+function canStartChangeInCircleFrom(pos, previousMovement = null) {
+  if (['A', 'B', 'C', 'E'].includes(pos)) return true;
+  return pos === 'X'
+    && previousMovement?.type === 'change_in_circle'
+    && getMovementEnd(previousMovement) === 'X';
+}
+
+function isCircleForbiddenAtX(typeId, pos, previousMovement = null) {
+  return pos === 'X'
+    && CIRCLE_TYPES.includes(typeId)
+    && previousMovement?.type === 'change_in_circle'
+    && getMovementEnd(previousMovement) === 'X';
+}
+
+function chooseBestByIncoming(previousMovement, candidates) {
+  if (!previousMovement || !candidates?.length) return candidates?.[0] || null;
+  const prevVector = getMovementEndVector(previousMovement);
+  if (!prevVector) return candidates[0];
+  let best = candidates[0];
+  let bestAngle = Infinity;
+  for (const candidate of candidates) {
+    const angle = angleBetweenVectors(prevVector, getFirstVector(candidate.points));
+    const score = angle == null ? Infinity : angle;
+    if (score < bestAngle) {
+      best = candidate;
+      bestAngle = score;
+    }
+  }
+  return best;
+}
+
+function chooseCircleDirection(letter, diameter, previousMovement = null) {
+  const cw = generateCirclePoints({ centerLetter: letter, circleDirection: 'cw' }, diameter);
+  const ccw = generateCirclePoints({ centerLetter: letter, circleDirection: 'ccw' }, diameter);
+  return chooseBestByIncoming(previousMovement, [
+    { value: 'cw', points: cw },
+    { value: 'ccw', points: ccw },
+  ])?.value || 'cw';
+}
+
+function chooseCurveSide(typeId, startLetter, endLetter, previousMovement = null) {
+  const base = { startLetter, centerLetter: startLetter, endLetter };
+  const plus = typeId === 'half_large_circle'
+    ? generateHalfLargeCirclePoints({ ...base, curveSide: 1 })
+    : generateChangeInCirclePoints({ ...base, curveSide: 1 });
+  const minus = typeId === 'half_large_circle'
+    ? generateHalfLargeCirclePoints({ ...base, curveSide: -1 })
+    : generateChangeInCirclePoints({ ...base, curveSide: -1 });
+  return chooseBestByIncoming(previousMovement, [
+    { value: 1, points: plus },
+    { value: -1, points: minus },
+  ])?.value || 1;
 }
 
 function getAutoEndForType(typeId, pos) {
@@ -137,17 +216,21 @@ function unavailableReasonForType(typeId, pos, previousMovement = null) {
     case 'small_circle_8':
     case 'small_circle_10':
     case 'small_circle_15':
-      reason = circleFitsAt(pos, td.diameter) ? null : 'kilógna a karámon kívül';
+      reason = isCircleForbiddenAtX(typeId, pos, previousMovement)
+        ? 'X-en körben válts után nem indítható kör'
+        : (circleFitsAt(pos, td.diameter) ? null : 'kilógna a karámon kívül');
       break;
     case 'large_circle':
-      reason = !LARGE_CIRCLE_STARTS.includes(pos)
-        ? 'nagykör csak A, B, C vagy E pontból'
-        : (circleFitsAt(pos, td.diameter) ? null : 'kilógna a karámon kívül');
+      reason = isCircleForbiddenAtX(typeId, pos, previousMovement)
+        ? 'X-en körben válts után nem indítható nagykör'
+        : (!LARGE_CIRCLE_STARTS.includes(pos)
+          ? 'nagykör csak A, B, C vagy E pontból'
+          : (circleFitsAt(pos, td.diameter) ? null : 'kilógna a karámon kívül'));
       break;
     case 'half_large_circle':
       reason = !HALF_LARGE_CIRCLE_STARTS.includes(pos)
         ? 'fél nagykör csak A, B, C vagy E pontból'
-        : (circleFitsAt(pos, td.diameter) ? null : 'kilógna a karámon kívül');
+        : null;
       break;
     case 'diagonal':
       reason = VALID_DIAGONAL_STARTS.includes(pos) ? null : 'csak K, F, H vagy M pontból';
@@ -156,7 +239,9 @@ function unavailableReasonForType(typeId, pos, previousMovement = null) {
       reason = VALID_HALF_DIAGONAL_STARTS.includes(pos) ? null : 'csak M, H, K vagy F pontból';
       break;
     case 'change_in_circle':
-      reason = CHANGE_IN_CIRCLE_STARTS.includes(pos) ? null : 'csak A, C, E vagy B pontból';
+      reason = canStartChangeInCircleFrom(pos, previousMovement)
+        ? null
+        : 'csak A, C, E, B pontból; X-ről csak közvetlenül X-re érkező körben válts után';
       break;
     default:
       reason = null;
@@ -165,7 +250,7 @@ function unavailableReasonForType(typeId, pos, previousMovement = null) {
   if (isImmediateReverse(typeId, pos, previousMovement)) {
     return 'rögtön visszafelé nem lehet';
   }
-  if (wouldTurnTooMuch(typeId, pos, previousMovement)) {
+  if (TURN_LIMITED_TYPES.includes(typeId) && wouldTurnTooMuch(typeId, pos, previousMovement)) {
     const angle = Math.round(getTurnAngleFromPrevious(typeId, pos, previousMovement));
     return `${angle}°-os fordulat lenne; 90° alatt kell maradni`;
   }
@@ -179,7 +264,7 @@ function isTypeAvailableFrom(typeId, pos, previousMovement = null) {
 }
 
 // Amikor a típust választjuk, a paraméterek automatikusan beállnak a kezdőpont szerint
-function autoParamsForType(typeId, pos, prev) {
+function autoParamsForType(typeId, pos, prev, previousMovement = null) {
   const td = MOVEMENT_TYPES.find(t => t.id === typeId);
   const updates = { type: typeId };
   switch (td?.mode) {
@@ -209,11 +294,19 @@ function autoParamsForType(typeId, pos, prev) {
       break;
     }
     case 'circle':
-    case 'half_large_circle':
-    case 'change_in_circle':
       updates.centerLetter = pos;
-      updates.endLetter = getCircleLikeEndLetter(typeId, pos);
+      updates.endLetter = pos;
+      updates.circleDirection = chooseCircleDirection(pos, td.diameter, previousMovement);
       break;
+    case 'half_large_circle':
+    case 'change_in_circle': {
+      const endLetter = getCircleLikeEndLetter(typeId, pos, previousMovement);
+      updates.startLetter = pos;
+      updates.centerLetter = pos;
+      updates.endLetter = endLetter;
+      updates.curveSide = chooseCurveSide(typeId, pos, endLetter, previousMovement);
+      break;
+    }
     default: break;
   }
   return updates;
@@ -294,9 +387,6 @@ function migrateMovement(m) {
   }
   if (t.mode === 'half_diagonal' && !m.choice && m.startLetter && m.endLetter) {
     out.choice = HALF_DIAGONAL_OPTIONS.find(o => o.from === m.startLetter && o.to === m.endLetter)?.id || null;
-  }
-  if ((t.mode === 'half_large_circle' || t.mode === 'change_in_circle') && !m.endLetter) {
-    out.endLetter = getCircleLikeEndLetter(m.type, m.centerLetter);
   }
   return out;
 }
@@ -451,108 +541,16 @@ function generateHalfDiagonalPath(m) {
   return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
 }
 
-function normalizeAngleDelta(delta, direction) {
-  if (direction === 'cw') {
-    while (delta <= 0) delta += Math.PI * 2;
-    while (delta > Math.PI * 2) delta -= Math.PI * 2;
-  } else {
-    while (delta >= 0) delta -= Math.PI * 2;
-    while (delta < -Math.PI * 2) delta += Math.PI * 2;
-  }
-  return delta;
-}
-
-function angleOfPoint(center, point) {
-  return Math.atan2(point.y - center.y, point.x - center.x);
-}
-
-function pointAtAngle(center, radius, angle) {
-  return { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius };
-}
-
-function oppositeDirection(direction) {
-  return direction === 'cw' ? 'ccw' : 'cw';
-}
-
-function sweepFlag(direction) {
-  return direction === 'cw' ? 1 : 0;
-}
-
-function getCircleLikeEndLetter(typeId, startLetter) {
-  if (typeId !== 'half_large_circle' && typeId !== 'change_in_circle') return startLetter || null;
-  if (startLetter === 'A' || startLetter === 'C') return 'X';
-  if (startLetter === 'B') return 'E';
-  if (startLetter === 'E') return 'B';
-  return startLetter || null;
-}
-
-function getCircleLikeEndPoint(typeId, startLetter, diameter = 20) {
-  const start = LETTERS[startLetter];
-  if (!start) return null;
-  if (typeId === 'half_large_circle' || typeId === 'change_in_circle') {
-    const namedEnd = getCircleLikeEndLetter(typeId, startLetter);
-    if (namedEnd && LETTERS[namedEnd]) return LETTERS[namedEnd];
-    const r = diameter / 2;
-    const c = getCircleCenter(start, r);
-    return { x: 2 * c.x - start.x, y: 2 * c.y - start.y };
-  }
-  return start;
-}
-
-function getCircularStartTangent(center, startPoint, direction) {
-  const a = angleOfPoint(center, startPoint);
-  return direction === 'cw'
-    ? { x: -Math.sin(a), y: Math.cos(a) }
-    : { x: Math.sin(a), y: -Math.cos(a) };
-}
-
-function arcPointsBetween(center, radius, startPoint, endPoint, direction, segments = 32) {
-  const a0 = angleOfPoint(center, startPoint);
-  const a1 = angleOfPoint(center, endPoint);
-  const delta = normalizeAngleDelta(a1 - a0, direction);
-  return interpolateArc(center, radius, a0, a0 + delta, segments);
-}
-
 function generateCirclePath(m, diameter) {
-  if (!circleFitsAt(m.centerLetter, diameter)) return '';
-  const start = LETTERS[m.centerLetter];
-  if (!start) return '';
-  const r = diameter / 2;
-  const c = getCircleCenter(start, r);
-  const direction = m.circleDirection || 'cw';
-  const a0 = angleOfPoint(c, start);
-  const mid = pointAtAngle(c, r, a0 + (direction === 'cw' ? Math.PI : -Math.PI));
-  const sw = sweepFlag(direction);
-  return `M ${start.x} ${start.y} A ${r} ${r} 0 1 ${sw} ${mid.x} ${mid.y} A ${r} ${r} 0 1 ${sw} ${start.x} ${start.y}`;
+  return pointsToSvgPath(generateCirclePoints(m, diameter));
 }
 
 function generateHalfLargeCirclePath(m) {
-  const start = LETTERS[m.centerLetter];
-  if (!start || !circleFitsAt(m.centerLetter, 20)) return '';
-  const r = 10;
-  const c = getCircleCenter(start, r);
-  const end = getCircleLikeEndPoint('half_large_circle', m.centerLetter, 20);
-  if (!end) return '';
-  const sw = sweepFlag(m.circleDirection || 'cw');
-  return `M ${start.x} ${start.y} A ${r} ${r} 0 0 ${sw} ${end.x} ${end.y}`;
-}
-
-function getChangeInCircleGeometry(m) {
-  const start = LETTERS[m.centerLetter];
-  const end = getCircleLikeEndPoint('change_in_circle', m.centerLetter, 20);
-  if (!start || !end) return null;
-  const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-  const c1 = { x: (start.x + mid.x) / 2, y: (start.y + mid.y) / 2 };
-  const c2 = { x: (mid.x + end.x) / 2, y: (mid.y + end.y) / 2 };
-  return { start, mid, end, c1, c2, r: 5, firstDirection: m.circleDirection || 'cw' };
+  return pointsToSvgPath(generateHalfLargeCirclePoints(m));
 }
 
 function generateChangeInCirclePath(m) {
-  const g = getChangeInCircleGeometry(m);
-  if (!g) return '';
-  const d1 = g.firstDirection;
-  const d2 = oppositeDirection(d1);
-  return `M ${g.start.x} ${g.start.y} A ${g.r} ${g.r} 0 0 ${sweepFlag(d1)} ${g.mid.x} ${g.mid.y} A ${g.r} ${g.r} 0 0 ${sweepFlag(d2)} ${g.end.x} ${g.end.y}`;
+  return pointsToSvgPath(generateChangeInCirclePoints(m));
 }
 
 function generatePath(m) {
@@ -564,9 +562,9 @@ function generatePath(m) {
     case 'half_school':      return generateHalfSchoolPath(m);
     case 'diagonal':         return generateDiagonalPath(m);
     case 'half_diagonal':    return generateHalfDiagonalPath(m);
-    case 'circle':           return generateCirclePath(m, t.diameter);
+    case 'circle':            return generateCirclePath(m, t.diameter);
     case 'half_large_circle': return generateHalfLargeCirclePath(m);
-    case 'change_in_circle': return generateChangeInCirclePath(m);
+    case 'change_in_circle':  return generateChangeInCirclePath(m);
     default:                 return '';
   }
 }
@@ -583,9 +581,9 @@ function getMovementStart(m) {
     case 'centerline':       return CENTERLINE_OPTIONS.find(c => c.id === m.choice)?.from;
     case 'half_school':      return HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice)?.from;
     case 'diagonal':         return DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.from;
-    case 'circle':
-    case 'half_large_circle':
-    case 'change_in_circle': return m.centerLetter;
+    case 'circle':            return m.centerLetter;
+    case 'half_large_circle': return m.startLetter || m.centerLetter;
+    case 'change_in_circle':  return m.startLetter || m.centerLetter;
     default:                 return null;
   }
 }
@@ -599,84 +597,98 @@ function getMovementEnd(m) {
     case 'centerline':       return CENTERLINE_OPTIONS.find(c => c.id === m.choice)?.to;
     case 'half_school':      return HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice)?.to;
     case 'diagonal':         return DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.to;
-    case 'circle':           return m.centerLetter;
-    case 'half_large_circle':
-    case 'change_in_circle': return getCircleLikeEndLetter(m.type, m.centerLetter);
+    case 'circle':            return m.centerLetter;
+    case 'half_large_circle': return m.endLetter || getCircleLikeEndLetter(m.type, m.startLetter || m.centerLetter);
+    case 'change_in_circle':  return m.endLetter || getCircleLikeEndLetter(m.type, m.startLetter || m.centerLetter);
     default:                 return null;
   }
 }
 
 function getMovementMidpoint(m) {
+  const pts = getMovementPoints(m);
+  if (pts.length) return getPointAlongPolyline(pts, 0.5);
   const t = MOVEMENT_TYPES.find(t => t.id === m.type);
   if (!t) return null;
   switch (t.mode) {
-    case 'straight':
-    case 'half_diagonal': {
-      const a = LETTERS[getMovementStart(m)], b = LETTERS[getMovementEnd(m)];
-      if (!a || !b) return null;
-      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    }
-    case 'centerline': {
-      const o = CENTERLINE_OPTIONS.find(c => c.id === m.choice);
-      if (!o) return null;
-      const a = LETTERS[o.from], b = LETTERS[o.to];
-      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    }
-    case 'half_school': {
-      const o = HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice);
-      if (!o) return null;
-      const a = LETTERS[o.from], b = LETTERS[o.to];
-      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    }
-    case 'diagonal':         return LETTERS.X;
-    case 'circle':           return getCircleCenter(LETTERS[m.centerLetter], t.diameter / 2);
-    case 'half_large_circle':
-    case 'change_in_circle': return getPointAlongMovement(m, 0.5) || getCircleCenter(LETTERS[m.centerLetter], 10);
-    default:                 return null;
+    case 'diagonal': return LETTERS.X;
+    case 'circle':   return getCircleCenter(LETTERS[m.centerLetter], t.diameter / 2);
+    default:         return null;
   }
 }
 
-function interpolateArc(center, radius, startAngle, endAngle, segments = 32) {
+function getPointAlongPolyline(points, progress) {
+  if (!points?.length) return null;
+  if (points.length === 1) return points[0];
+  const total = pathLength(points);
+  if (!total) return points[0];
+  let target = Math.max(0, Math.min(1, progress)) * total;
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    const seg = Math.hypot(b.x - a.x, b.y - a.y);
+    if (target <= seg) {
+      const t = seg ? target / seg : 0;
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    }
+    target -= seg;
+  }
+  return points[points.length - 1];
+}
+
+function generateCirclePoints(m, diameter, segments = 96) {
+  const startLetter = m.centerLetter;
+  if (!circleFitsAt(startLetter, diameter)) return [];
+  const start = LETTERS[startLetter];
+  if (!start) return [];
+  const r = diameter / 2;
+  const c = getCircleCenter(start, r);
+  const startAngle = Math.atan2(start.y - c.y, start.x - c.x);
+  const direction = m.circleDirection === 'ccw' ? -1 : 1;
   const pts = [];
   for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    const a = startAngle + (endAngle - startAngle) * t;
-    pts.push({ x: center.x + Math.cos(a) * radius, y: center.y + Math.sin(a) * radius });
+    const a = startAngle + direction * Math.PI * 2 * (i / segments);
+    pts.push({ x: c.x + Math.cos(a) * r, y: c.y + Math.sin(a) * r });
   }
   return pts;
 }
 
-function generateCirclePoints(m, diameter, segments = 96) {
-  if (!circleFitsAt(m.centerLetter, diameter)) return [];
-  const start = LETTERS[m.centerLetter];
-  if (!start) return [];
-  const r = diameter / 2;
-  const c = getCircleCenter(start, r);
-  const direction = m.circleDirection || 'cw';
-  const a0 = angleOfPoint(c, start);
-  const delta = direction === 'cw' ? Math.PI * 2 : -Math.PI * 2;
-  return interpolateArc(c, r, a0, a0 + delta, segments);
+function generateSemiCircleByDiameter(a, b, side = 1, segments = 32) {
+  if (!a || !b) return [];
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const length = Math.hypot(dx, dy);
+  if (!length) return [a];
+  const nx = -dy / length;
+  const ny = dx / length;
+  const r = length / 2;
+  const pts = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const bulge = Math.sin(Math.PI * t) * r * side;
+    pts.push({
+      x: a.x + dx * t + nx * bulge,
+      y: a.y + dy * t + ny * bulge,
+    });
+  }
+  return pts;
 }
 
 function generateHalfLargeCirclePoints(m, segments = 48) {
-  const start = LETTERS[m.centerLetter];
-  if (!start || !circleFitsAt(m.centerLetter, 20)) return [];
-  const r = 10;
-  const c = getCircleCenter(start, r);
-  const direction = m.circleDirection || 'cw';
-  const a0 = angleOfPoint(c, start);
-  const delta = direction === 'cw' ? Math.PI : -Math.PI;
-  return interpolateArc(c, r, a0, a0 + delta, segments);
+  const startLetter = m.startLetter || m.centerLetter;
+  const endLetter = m.endLetter || getCircleLikeEndLetter('half_large_circle', startLetter);
+  const a = LETTERS[startLetter], b = LETTERS[endLetter];
+  if (!a || !b) return [];
+  return generateSemiCircleByDiameter(a, b, m.curveSide || 1, segments);
 }
 
-function generateChangeInCirclePoints(m) {
-  const g = getChangeInCircleGeometry(m);
-  if (!g) return [];
-  const d1 = g.firstDirection;
-  const d2 = oppositeDirection(d1);
+function generateChangeInCirclePoints(m, segments = 24) {
+  const startLetter = m.startLetter || m.centerLetter;
+  const endLetter = m.endLetter || getCircleLikeEndLetter('change_in_circle', startLetter);
+  const a = LETTERS[startLetter], b = LETTERS[endLetter];
+  if (!a || !b) return [];
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  const side = m.curveSide || 1;
   return [
-    ...arcPointsBetween(g.c1, g.r, g.start, g.mid, d1, 24),
-    ...arcPointsBetween(g.c2, g.r, g.mid, g.end, d2, 24).slice(1),
+    ...generateSemiCircleByDiameter(a, mid, side, segments),
+    ...generateSemiCircleByDiameter(mid, b, -side, segments).slice(1),
   ];
 }
 
@@ -703,9 +715,9 @@ function getMovementPoints(m) {
       const endLetter = o?.to || m.endLetter;
       return [LETTERS[startLetter], LETTERS[endLetter]].filter(Boolean);
     }
-    case 'circle':           return generateCirclePoints(m, t.diameter);
+    case 'circle':            return generateCirclePoints(m, t.diameter);
     case 'half_large_circle': return generateHalfLargeCirclePoints(m);
-    case 'change_in_circle': return generateChangeInCirclePoints(m);
+    case 'change_in_circle':  return generateChangeInCirclePoints(m);
     default:                 return [];
   }
 }
@@ -739,6 +751,8 @@ function angleBetweenVectors(a, b) {
 }
 
 function getMovementEndVector(m) {
+  const t = MOVEMENT_TYPES.find(t => t.id === m.type);
+  if (!t) return null;
   return getLastVector(getMovementPoints(m));
 }
 
@@ -746,72 +760,9 @@ function getMovementStartVector(m) {
   return getFirstVector(getMovementPoints(m));
 }
 
-function getCircleStartVectorOptionsForMovement(m) {
-  const t = MOVEMENT_TYPES.find(t => t.id === m.type);
-  if (!t) return [];
-  const startLetter = getMovementStart(m);
-  const start = LETTERS[startLetter];
-  if (!start) return [];
-
-  if (t.mode === 'circle') {
-    const c = getCircleCenter(start, (t.diameter || 20) / 2);
-    return [
-      { direction: 'cw',  vector: getCircularStartTangent(c, start, 'cw') },
-      { direction: 'ccw', vector: getCircularStartTangent(c, start, 'ccw') },
-    ];
-  }
-
-  if (t.mode === 'half_large_circle') {
-    const c = getCircleCenter(start, 10);
-    return [
-      { direction: 'cw',  vector: getCircularStartTangent(c, start, 'cw') },
-      { direction: 'ccw', vector: getCircularStartTangent(c, start, 'ccw') },
-    ];
-  }
-
-  if (t.mode === 'change_in_circle') {
-    const end = getCircleLikeEndPoint('change_in_circle', startLetter, 20);
-    if (!end) return [];
-    const mid = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-    const c1 = { x: (start.x + mid.x) / 2, y: (start.y + mid.y) / 2 };
-    return [
-      { direction: 'cw',  vector: getCircularStartTangent(c1, start, 'cw') },
-      { direction: 'ccw', vector: getCircularStartTangent(c1, start, 'ccw') },
-    ];
-  }
-
-  return [];
-}
-
-function chooseCircleDirectionForMovement(m, previousMovement, fallback = 'cw') {
-  if (!previousMovement) return m.circleDirection || fallback;
-  if (getMovementEnd(previousMovement) !== getMovementStart(m)) return m.circleDirection || fallback;
-  const prevVector = getMovementEndVector(previousMovement);
-  const options = getCircleStartVectorOptionsForMovement(m);
-  if (!prevVector || !options.length) return m.circleDirection || fallback;
-  const ranked = options
-    .map(o => ({ ...o, angle: angleBetweenVectors(prevVector, o.vector) }))
-    .filter(o => o.angle != null)
-    .sort((a, b) => a.angle - b.angle);
-  return ranked[0]?.direction || m.circleDirection || fallback;
-}
-
-function finalizeMovementGeometry(m, previousMovement = null) {
-  const t = MOVEMENT_TYPES.find(t => t.id === m.type);
-  if (!t) return m;
-  const out = { ...m };
-  if (t.mode === 'circle' || t.mode === 'half_large_circle' || t.mode === 'change_in_circle') {
-    out.circleDirection = chooseCircleDirectionForMovement(out, previousMovement, out.circleDirection || 'cw');
-  }
-  if (t.mode === 'half_large_circle' || t.mode === 'change_in_circle') {
-    out.endLetter = getCircleLikeEndLetter(out.type, out.centerLetter);
-  }
-  return out;
-}
-
 function buildAutoMovementForType(typeId, pos, gait = 'trot_working', previousMovement = null) {
-  const auto = autoParamsForType(typeId, pos, null);
-  const payload = buildPayloadFromState({
+  const auto = autoParamsForType(typeId, pos, null, previousMovement);
+  return buildPayloadFromState({
     type: typeId,
     startLetter: pos,
     endLetter: auto.endLetter || getDefaultEndFor(pos),
@@ -821,28 +772,16 @@ function buildAutoMovementForType(typeId, pos, gait = 'trot_working', previousMo
     exitMode: 'centerline',
     gait,
     notes: '',
-  }, pos, 'angle-check');
-  return finalizeMovementGeometry(payload, previousMovement);
+    circleDirection: auto.circleDirection,
+    curveSide: auto.curveSide,
+  }, pos, 'angle-check', previousMovement);
 }
 
 function getTurnAngleFromPrevious(typeId, pos, previousMovement) {
-  const turnLimitedTypes = ['diagonal', 'half_diagonal', 'small_circle_8', 'small_circle_10', 'small_circle_15', 'large_circle', 'half_large_circle', 'change_in_circle'];
-  if (!turnLimitedTypes.includes(typeId)) return null;
-  if (!previousMovement || getMovementEnd(previousMovement) !== pos) return null;
+  if (!previousMovement || !TURN_LIMITED_TYPES.includes(typeId)) return null;
+  if (getMovementEnd(previousMovement) !== pos) return null;
   const prevVector = getMovementEndVector(previousMovement);
-  if (!prevVector) return null;
-
-  const candidate = buildAutoMovementForType(typeId, pos, previousMovement.gait, previousMovement);
-  const t = MOVEMENT_TYPES.find(t => t.id === typeId);
-  if (!t) return null;
-
-  if (t.mode === 'circle' || t.mode === 'half_large_circle' || t.mode === 'change_in_circle') {
-    const options = getCircleStartVectorOptionsForMovement(candidate);
-    const angles = options.map(o => angleBetweenVectors(prevVector, o.vector)).filter(a => a != null);
-    return angles.length ? Math.min(...angles) : null;
-  }
-
-  const nextVector = getMovementStartVector(candidate);
+  const nextVector = getMovementStartVector(buildAutoMovementForType(typeId, pos, previousMovement.gait, previousMovement));
   return angleBetweenVectors(prevVector, nextVector);
 }
 
@@ -869,61 +808,38 @@ function getMovementDurationSeconds(m) {
 
 function buildPlaybackPlan(movements) {
   let cursor = 0;
+  let distanceCursor = 0;
   const segments = (movements || []).map((m, idx) => {
+    const length = getMovementLengthMeters(m);
     const duration = getMovementDurationSeconds(m);
-    const seg = { movement: m, idx, start: cursor, end: cursor + duration, duration };
+    const seg = {
+      movement: m,
+      idx,
+      start: cursor,
+      end: cursor + duration,
+      duration,
+      length,
+      startDistance: distanceCursor,
+      endDistance: distanceCursor + length,
+    };
     cursor += duration;
+    distanceCursor += length;
     return seg;
   });
-  return { segments, totalDuration: cursor };
+  return { segments, totalDuration: cursor, totalDistance: distanceCursor };
 }
 
 function getPlaybackMoment(plan, elapsed) {
-  if (!plan?.segments?.length) return { idx: null, movement: null, progress: 0 };
+  if (!plan?.segments?.length) return { idx: null, movement: null, progress: 0, distance: 0 };
   const clamped = Math.max(0, Math.min(elapsed, plan.totalDuration));
   const seg = plan.segments.find(s => clamped >= s.start && clamped <= s.end) || plan.segments[plan.segments.length - 1];
   const progress = seg.duration ? Math.max(0, Math.min(1, (clamped - seg.start) / seg.duration)) : 1;
-  return { idx: seg.idx, movement: seg.movement, progress };
+  const distance = seg.startDistance + seg.length * progress;
+  return { idx: seg.idx, movement: seg.movement, progress, distance };
 }
 
 function getPointAlongMovement(m, progress) {
-  const pts = getMovementPoints(m);
-  if (!pts.length) return null;
-  if (pts.length === 1) return pts[0];
-  const total = pathLength(pts);
-  if (!total) return pts[0];
-  let target = Math.max(0, Math.min(1, progress)) * total;
-  for (let i = 1; i < pts.length; i++) {
-    const a = pts[i - 1], b = pts[i];
-    const seg = Math.hypot(b.x - a.x, b.y - a.y);
-    if (target <= seg) {
-      const t = seg ? target / seg : 0;
-      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
-    }
-    target -= seg;
-  }
-  return pts[pts.length - 1];
-}
-
-function getDistanceAlongMovement(m, progress) {
-  const pts = getMovementPoints(m);
-  if (!pts.length) return 0;
-  const total = pathLength(pts);
-  return Math.max(0, Math.min(1, progress)) * total;
-}
-
-function getPlaybackDistanceMeters(plan, elapsed) {
-  if (!plan?.segments?.length) return 0;
-  const moment = getPlaybackMoment(plan, elapsed);
-  return plan.segments.reduce((sum, seg) => {
-    if (seg.idx < moment.idx) return sum + getMovementLengthMeters(seg.movement);
-    if (seg.idx === moment.idx) return sum + getDistanceAlongMovement(seg.movement, moment.progress);
-    return sum;
-  }, 0);
-}
-
-function formatMeters(meters) {
-  return `${(meters || 0).toFixed(1)} m`;
+  return getPointAlongPolyline(getMovementPoints(m), progress);
 }
 
 function formatDuration(seconds) {
@@ -931,6 +847,12 @@ function formatDuration(seconds) {
   const m = Math.floor(safe / 60);
   const s = safe % 60;
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function formatDistance(meters) {
+  const safe = Math.max(0, meters || 0);
+  if (safe >= 1000) return `${(safe / 1000).toFixed(2)} km`;
+  return `${Math.round(safe)} m`;
 }
 
 
@@ -941,16 +863,20 @@ function Arena({
   movements,
   highlightedIdx,
   showAll,
+  visibleIndices = null,
   previewMovement,
   playbackMovement,
   playbackProgress = 0,
   numberOffset = 0,
   markerId = 'movement-arrow',
+  arrowOnlyHighlighted = false,
   selectableLetters = [],
   selectedLetter = null,
   onLetterClick = null,
 }) {
   const padX = 4.5, padY = 4.5;
+  const visibleSet = visibleIndices ? new Set(visibleIndices) : null;
+  const shouldShowMovement = (idx) => visibleSet ? visibleSet.has(idx) : (showAll || idx === highlightedIdx);
   return (
     <svg viewBox={`${-padX} ${-padY} ${20 + padX * 2} ${ARENA_LEN + padY * 2}`} className="w-full h-full" style={{ maxHeight: '100%' }}>
       <defs>
@@ -970,7 +896,7 @@ function Arena({
       </g>
 
       {movements.map((m, idx) => {
-        if (!showAll && idx !== highlightedIdx) return null;
+        if (!shouldShowMovement(idx)) return null;
         const isHi   = idx === highlightedIdx;
         const path   = generatePath(m);
         if (!path) return null;
@@ -983,12 +909,12 @@ function Arena({
                 strokeOpacity={(showAll && !isHi && highlightedIdx != null) ? 0.32 : 0.92}
                 strokeLinecap="round" strokeLinejoin="round"
                 strokeDasharray={dashed ? '0.7 0.4' : undefined}
-                markerEnd={`url(#${markerId})`} />
+                markerEnd={!arrowOnlyHighlighted || isHi ? `url(#${markerId})` : undefined} />
         );
       })}
 
       {movements.map((m, idx) => {
-        if (!showAll && idx !== highlightedIdx) return null;
+        if (!shouldShowMovement(idx)) return null;
         const isHi  = idx === highlightedIdx;
         const mid   = getMovementMidpoint(m);
         if (!mid) return null;
@@ -1097,7 +1023,7 @@ function Arena({
 // ════════════════════════════════════════════════════════════
 // MOZGÁS-SZERKESZTŐ FORM
 // ════════════════════════════════════════════════════════════
-function buildPayloadFromState(state, currentPos, initialId) {
+function buildPayloadFromState(state, currentPos, initialId, previousMovement = null) {
   const td = MOVEMENT_TYPES.find(t => t.id === state.type);
   const payload = {
     id: initialId || Date.now().toString(36) + Math.random().toString(36).slice(2,6),
@@ -1124,12 +1050,19 @@ function buildPayloadFromState(state, currentPos, initialId) {
       payload.choice      = state.choice;
       break;
     case 'circle':
-    case 'half_large_circle':
-    case 'change_in_circle':
       payload.centerLetter = currentPos;
-      payload.endLetter = getCircleLikeEndLetter(state.type, currentPos);
-      if (state.circleDirection) payload.circleDirection = state.circleDirection;
+      payload.endLetter = currentPos;
+      payload.circleDirection = state.circleDirection || chooseCircleDirection(currentPos, td.diameter, previousMovement);
       break;
+    case 'half_large_circle':
+    case 'change_in_circle': {
+      const endLetter = state.endLetter || getCircleLikeEndLetter(state.type, currentPos, previousMovement);
+      payload.startLetter = currentPos;
+      payload.centerLetter = currentPos;
+      payload.endLetter = endLetter;
+      payload.curveSide = state.curveSide || chooseCurveSide(state.type, currentPos, endLetter, previousMovement);
+      break;
+    }
   }
   return payload;
 }
@@ -1146,7 +1079,7 @@ function MovementForm({ initial, currentPos, previousMovement, defaultGait, lett
     if (initial) return { ...initial };
     // Kezdő típus: ha a sarokponton van → szabad választás, default 'straight'
     const initType = 'straight';
-    const auto = autoParamsForType(initType, effectivePos, null);
+    const auto = autoParamsForType(initType, effectivePos, null, previousMovement);
     return {
       type:        initType,
       startLetter: effectivePos,
@@ -1166,12 +1099,9 @@ function MovementForm({ initial, currentPos, previousMovement, defaultGait, lett
   // Élő preview: ha a state változik, küldünk egy "ideiglenes mozgást" felfelé
   useEffect(() => {
     if (!onPreview) return;
-    const payload = finalizeMovementGeometry(
-      buildPayloadFromState(state, effectivePos, initial?.id || 'preview'),
-      previousMovement
-    );
+    const payload = buildPayloadFromState(state, effectivePos, initial?.id || 'preview', previousMovement);
     onPreview(payload);
-  }, [state, effectivePos, previousMovement]);
+  }, [state, effectivePos]);
 
   // Form bezáráskor töröljük a preview-t
   useEffect(() => () => { if (onPreview) onPreview(null); }, []);
@@ -1185,7 +1115,7 @@ function MovementForm({ initial, currentPos, previousMovement, defaultGait, lett
   }, [letterPickRequest?.nonce]);
 
   function handleSelectType(newType) {
-    const updates = autoParamsForType(newType, effectivePos, state);
+    const updates = autoParamsForType(newType, effectivePos, state, previousMovement);
     update(updates);
   }
 
@@ -1195,10 +1125,7 @@ function MovementForm({ initial, currentPos, previousMovement, defaultGait, lett
       alert(`Ezt a szakaszt innen nem lehet menteni: ${reason}`);
       return;
     }
-    onSave(finalizeMovementGeometry(
-      buildPayloadFromState(state, effectivePos, initial?.id),
-      previousMovement
-    ));
+    onSave(buildPayloadFromState(state, effectivePos, initial?.id, previousMovement));
   }
 
   const inputClass = "w-full px-3 py-2 bg-paper border border-[#d4c9a8] rounded text-charcoal focus:outline-none focus:border-forest focus:ring-1 focus:ring-forest/30 transition";
@@ -1374,13 +1301,7 @@ function MovementForm({ initial, currentPos, previousMovement, defaultGait, lett
 
         {(typeDef.mode === 'circle' || typeDef.mode === 'half_large_circle' || typeDef.mode === 'change_in_circle') && (
           <div className="col-span-2 px-2.5 py-2 text-[12px] text-forest italic bg-[#f5f0e0] border border-[#d4c9a8] rounded">
-            <strong className="not-italic font-medium">{typeDef.name}</strong>{' '}
-            {typeDef.mode === 'circle'
-              ? `${effectivePos}-nél, vissza ${effectivePos}-be`
-              : `${effectivePos} → ${getCircleLikeEndLetter(state.type, effectivePos)}`}
-            <span className="block text-[10px] text-[#7b705d] mt-1">
-              Az ív irányát a beérkező menetirány alapján választja ki az app.
-            </span>
+            <strong className="not-italic font-medium">{typeDef.name}</strong> {effectivePos}-nél{state.endLetter && state.endLetter !== effectivePos ? ` → ${state.endLetter}` : ''}
           </div>
         )}
 
@@ -1433,10 +1354,10 @@ function describeMovement(m) {
     case 'half_school':      return `Félpálya – ${HALF_SCHOOL_OPTIONS.find(h => h.id === m.choice)?.label || ''}`;
     case 'diagonal':         return `Átló – ${DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.label || ''}`;
     case 'half_diagonal':    return `Félátló – ${HALF_DIAGONAL_OPTIONS.find(d => d.id === m.choice)?.label || `${m.startLetter} → ${m.endLetter}`}`;
-    case 'circle':           return `${t.name} – ${m.centerLetter}-nél, vissza ${m.centerLetter}-be`;
-    case 'half_large_circle':
-    case 'change_in_circle': return `${t.name} – ${m.centerLetter} → ${getCircleLikeEndLetter(m.type, m.centerLetter)}`;
-    case 'straight':         return `${t.name} – ${m.startLetter}–${m.endLetter}`;
+    case 'circle':            return `${t.name} – ${m.centerLetter}-nél`;
+    case 'half_large_circle': return `${t.name} – ${(m.startLetter || m.centerLetter)}–${getMovementEnd(m)}`;
+    case 'change_in_circle':  return `${t.name} – ${(m.startLetter || m.centerLetter)}–${getMovementEnd(m)}`;
+    case 'straight':          return `${t.name} – ${m.startLetter}–${m.endLetter}`;
     default:                 return t.name;
   }
 }
@@ -1535,7 +1456,7 @@ export default function App() {
   const [programs, setPrograms]             = useState([]);
   const [currentId, setCurrentId]           = useState(null);
   const [editing, setEditing]               = useState(null);
-  const [showAll, setShowAll]               = useState(true);
+  const [viewMode, setViewMode]             = useState('context');
   const [highlightedIdx, setHighlightedIdx] = useState(null);
   const [drawerOpen, setDrawerOpen]         = useState(false);
   const [loaded, setLoaded]                 = useState(false);
@@ -1612,14 +1533,23 @@ export default function App() {
   const playbackProgressPercent = playbackPlan.totalDuration
     ? Math.min(100, (playback.elapsed / playbackPlan.totalDuration) * 100)
     : 0;
-  const playbackDistanceMeters = useMemo(
-    () => getPlaybackDistanceMeters(playbackPlan, playback.elapsed),
-    [playbackPlan, playback.elapsed]
-  );
-  const playbackTotalDistanceMeters = useMemo(
-    () => (current?.movements || []).reduce((sum, m) => sum + getMovementLengthMeters(m), 0),
-    [current?.movements]
-  );
+  const totalDistanceMeters = playbackPlan.totalDistance || 0;
+  const playbackDistanceMeters = playbackMoment.distance || 0;
+  const playbackGait = playbackMoment.movement ? GAITS.find(g => g.id === playbackMoment.movement.gait) : null;
+
+  const selectedDisplayIdx = playback.active || playback.elapsed > 0
+    ? playbackHighlightIdx
+    : (highlightedIdx ?? ((current?.movements?.length || 0) ? (current.movements.length - 1) : null));
+  const visibleArenaIndices = useMemo(() => {
+    const len = current?.movements?.length || 0;
+    if (viewMode === 'all') return null;
+    if (selectedDisplayIdx == null || selectedDisplayIdx < 0 || len === 0) return [];
+    if (viewMode === 'selected') return [selectedDisplayIdx];
+    const from = Math.max(0, selectedDisplayIdx - 2);
+    const out = [];
+    for (let i = from; i <= selectedDisplayIdx && i < len; i++) out.push(i);
+    return out;
+  }, [viewMode, selectedDisplayIdx, current]);
 
   const arenaLetterPicking = editing && previewMovement && MOVEMENT_TYPES.find(t => t.id === previewMovement.type)?.mode === 'straight';
   const arenaSelectableLetters = arenaLetterPicking
@@ -1813,6 +1743,9 @@ export default function App() {
                  onChange={e => updateCurrent({ level: e.target.value })}
                  placeholder="Szint / kategória (pl. E, A, L, M)"
                  className="bg-paper border border-[#d4c9a8] rounded px-2 py-1 text-xs flex-1 min-w-[120px] max-w-[240px]" />
+          <div className="px-2 py-1 rounded bg-paper border border-[#d4c9a8] text-xs text-[#5e5b54]">
+            Össztáv: <strong className="text-charcoal tabular-nums">{formatDistance(totalDistanceMeters)}</strong>
+          </div>
           <div className="ml-auto flex items-center gap-1.5">
             <button onClick={togglePlayback}
                     disabled={(current.movements || []).length === 0}
@@ -1827,21 +1760,41 @@ export default function App() {
               </button>
             )}
           </div>
-          <button onClick={() => setShowAll(!showAll)}
-                  className="flex items-center gap-1.5 text-xs px-2 py-1 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]">
-            {showAll ? <Eye size={13}/> : <EyeOff size={13}/>}
-            {showAll ? 'Minden látszik' : 'Csak kiválasztott'}
-          </button>
+          <div className="flex items-center gap-1 rounded border border-[#d4c9a8] bg-paper p-0.5">
+            {[
+              { id: 'context', label: 'Kiválasztott + előző 2', icon: Eye },
+              { id: 'all', label: 'Minden', icon: Eye },
+              { id: 'selected', label: 'Csak kiválasztott', icon: EyeOff },
+            ].map(opt => {
+              const Icon = opt.icon;
+              return (
+                <button key={opt.id}
+                        onClick={() => setViewMode(opt.id)}
+                        className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition ${
+                          viewMode === opt.id ? 'bg-forest text-cream' : 'text-[#5e5b54] hover:bg-[#e8dfc8]'
+                        }`}
+                        title={opt.label}>
+                  <Icon size={13}/>
+                  <span className="hidden lg:inline">{opt.label}</span>
+                </button>
+              );
+            })}
+          </div>
           {(playback.elapsed > 0 || playback.active) && (
             <div className="basis-full flex items-center gap-2 text-[11px] text-[#5e5b54] mt-1">
               <div className="h-1.5 flex-1 bg-[#e8dfc8] rounded-full overflow-hidden">
                 <div className="h-full bg-forest" style={{ width: `${playbackProgressPercent}%` }} />
               </div>
               <span className="tabular-nums">{formatDuration(playback.elapsed)} / {formatDuration(playbackPlan.totalDuration)}</span>
-              <span className="hidden sm:inline text-[#9a8e75]">·</span>
-              <span className="tabular-nums" title="Megtett táv a 20×40 m-es pálya méretei alapján">
-                {formatMeters(playbackDistanceMeters)} / {formatMeters(playbackTotalDistanceMeters)}
-              </span>
+              <span className="tabular-nums">{formatDistance(playbackDistanceMeters)} / {formatDistance(playbackPlan.totalDistance)}</span>
+              {playbackGait && (
+                <div className="basis-full mt-1 px-2 py-1.5 rounded bg-paper border border-[#d4c9a8]">
+                  <div className="text-lg md:text-xl font-display font-semibold text-forest leading-tight">{playbackGait.name}</div>
+                  {playbackMoment.movement?.notes && (
+                    <div className="text-xs text-[#5e5b54] italic mt-0.5">{playbackMoment.movement.notes}</div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1885,26 +1838,32 @@ export default function App() {
           <div className="w-full h-full max-w-md flex items-center justify-center" style={{ aspectRatio: '20/40' }}>
             <Arena
               movements={current.movements || []}
-              highlightedIdx={playbackHighlightIdx}
-              showAll={playback.active || playback.elapsed > 0 ? true : showAll}
+              highlightedIdx={playbackHighlightIdx ?? selectedDisplayIdx}
+              showAll={true}
+              visibleIndices={visibleArenaIndices}
               previewMovement={previewMovement}
               playbackMovement={(playback.active || playback.elapsed > 0) ? playbackMoment.movement : null}
               playbackProgress={playbackMoment.progress}
               selectableLetters={arenaSelectableLetters}
               selectedLetter={arenaSelectedLetter}
               onLetterClick={letter => setLetterPickRequest({ letter, nonce: Date.now() })}
+              markerId={`movement-arrow-${viewMode}-${selectedDisplayIdx ?? 'none'}`}
+              arrowOnlyHighlighted={viewMode === 'context'}
             />
           </div>
         </section>
 
         <aside className="no-print hidden md:flex flex-col w-80 border-l border-[#d4c9a8] bg-[#f5f0e0]/30">
           <div className="p-3 flex items-center justify-between border-b border-[#d4c9a8]">
-            <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">
-              Mozgások · {current.movements?.length || 0}
+            <div>
+              <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">
+                Mozgások · {current.movements?.length || 0}
+              </div>
+              <div className="text-[11px] text-[#5e5b54] mt-0.5">Össztáv: <strong className="text-charcoal tabular-nums">{formatDistance(totalDistanceMeters)}</strong></div>
             </div>
             <button onClick={() => { resetPlayback(); setEditing({ mode: 'new', seed: Date.now().toString(36) }); }}
-                    className="flex items-center gap-1 px-2 py-1 bg-forest text-cream rounded text-xs font-medium hover:bg-[#2a4d3a] transition">
-              <Plus size={13} /> Új
+                    className="flex items-center gap-1 px-3 py-1.5 bg-forest text-cream rounded text-xs font-medium hover:bg-[#2a4d3a] transition shadow-sm">
+              <Plus size={13} /> Új szakasz
             </button>
           </div>
           {editing && (
@@ -1930,7 +1889,7 @@ export default function App() {
               <div className="p-6 text-center text-[#9a8e75]">
                 <BookOpen className="mx-auto mb-3 opacity-40" size={32} />
                 <div className="text-sm font-display italic">Még nincs mozgás</div>
-                <div className="text-xs mt-1">Kattints az "Új" gombra a kezdéshez</div>
+                <div className="text-xs mt-1">Kattints az „Új szakasz” gombra a kezdéshez</div>
               </div>
             )}
             {(current.movements || []).map((m, idx) => (
@@ -1950,12 +1909,15 @@ export default function App() {
 
         <section className="md:hidden border-t border-[#d4c9a8]">
           <div className="px-4 py-2 flex items-center justify-between border-b border-[#d4c9a8] bg-[#f5f0e0]/40">
-            <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">
-              Mozgások · {current.movements?.length || 0}
+            <div>
+              <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">
+                Mozgások · {current.movements?.length || 0}
+              </div>
+              <div className="text-[11px] text-[#5e5b54]">Össztáv: <strong>{formatDistance(totalDistanceMeters)}</strong></div>
             </div>
             <button onClick={() => { resetPlayback(); setEditing({ mode: 'new', seed: Date.now().toString(36) }); }}
                     className="flex items-center gap-1 px-2 py-1 bg-forest text-cream rounded text-xs font-medium">
-              <Plus size={13} /> Új
+              <Plus size={13} /> Új szakasz
             </button>
           </div>
           {editing && (
