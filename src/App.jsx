@@ -941,22 +941,24 @@ function Arena({
         );
       })}
 
-      {/* ÉLŐ PREVIEW – a most szerkesztett mozgás szaggatott zöld vonalként */}
+      {/* ÉLŐ PREVIEW – még nem hozzáadott, halvány, nagy közökkel szaggatott tervvonal */}
       {previewMovement && (() => {
         const path = generatePath(previewMovement);
         if (!path) return null;
-        const start = LETTERS[getMovementStart(previewMovement)];
+        const gait = GAITS.find(g => g.id === previewMovement.gait);
+        const color = gait?.color || '#5e5b54';
+        const points = getMovementPoints(previewMovement);
+        const startPoint = points[0];
         return (
-          <g>
-            <path d={path} fill="none" stroke="#2e5f3e"
+          <g opacity={0.42}>
+            <path d={path} fill="none" stroke={color}
                   strokeWidth={0.55}
-                  strokeOpacity={0.7}
                   strokeLinecap="round" strokeLinejoin="round"
-                  strokeDasharray="0.5 0.4"
+                  strokeDasharray="1.6 1.25"
                   markerEnd={`url(#${markerId})`} />
-            {start && (
-              <circle cx={start.x} cy={start.y} r={0.7}
-                      fill="#2e5f3e" fillOpacity={0.7} />
+            {startPoint && (
+              <circle cx={startPoint.x} cy={startPoint.y} r={0.8}
+                      fill="#faf6ec" stroke={color} strokeWidth={0.22} />
             )}
           </g>
         );
@@ -1560,6 +1562,26 @@ export default function App() {
     : [];
   const arenaSelectedLetter = arenaLetterPicking ? getMovementEnd(previewMovement) : null;
 
+  const previewStart = previewMovement ? getMovementStart(previewMovement) : null;
+  const previewUnavailableReason = previewMovement
+    ? unavailableReasonForType(previewMovement.type, previewStart || currentPos || START_POSITION, previousMovement)
+    : null;
+
+  function savePreviewMovement() {
+    if (!editing || !previewMovement) return;
+    const start = getMovementStart(previewMovement) || currentPos || START_POSITION;
+    const reason = unavailableReasonForType(previewMovement.type, start, previousMovement);
+    if (reason) {
+      alert(`Ezt a szakaszt innen nem lehet menteni: ${reason}`);
+      return;
+    }
+    const movementToSave = editing.mode === 'new' && (!previewMovement.id || previewMovement.id === 'preview')
+      ? { ...previewMovement, id: Date.now().toString(36) + Math.random().toString(36).slice(2,6) }
+      : previewMovement;
+    if (editing.mode === 'new') addMovement(movementToSave);
+    else updateMovement(editing.idx, movementToSave);
+  }
+
   useEffect(() => {
     setPlayback({ active: false, elapsed: 0 });
   }, [currentId]);
@@ -1760,6 +1782,15 @@ export default function App() {
               <button onClick={resetPlayback}
                       className="flex items-center gap-1 text-xs px-2 py-1 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]" title="Lejátszás nullázása">
                 <RotateCcw size={13}/>
+              </button>
+            )}
+            {editing && (
+              <button onClick={savePreviewMovement}
+                      disabled={!previewMovement || !!previewUnavailableReason}
+                      className="flex items-center gap-1.5 text-xs px-2 py-1 bg-forest text-cream rounded transition hover:bg-[#2a4d3a] disabled:bg-[#b1a58e] disabled:cursor-not-allowed"
+                      title={previewUnavailableReason || (editing.mode === 'new' ? 'Hozzáadás' : 'Mentés')}>
+                <Check size={13}/>
+                <span className="hidden sm:inline">{editing.mode === 'new' ? 'Hozzáadás' : 'Mentés'}</span>
               </button>
             )}
           </div>
