@@ -313,13 +313,13 @@ function autoParamsForType(typeId, pos, prev, previousMovement = null) {
 }
 
 const GAITS = [
-  { id: 'halt',             name: 'Megállás',           color: '#5e5b54', dash: false },
   { id: 'walk_collected',   name: 'Gyűjtött lépés',     color: '#4a6fa5', dash: true  },
   { id: 'walk_medium',      name: 'Középütemű lépés',   color: '#2e5288', dash: true  },
   { id: 'walk_extended',    name: 'Nyújtott lépés',     color: '#1e3d6e', dash: true  },
   { id: 'walk_free',        name: 'Szabad lépés',       color: '#7a99c2', dash: true  },
   { id: 'trot_collected',   name: 'Gyűjtött ügetés',    color: '#4a7a4f', dash: false },
   { id: 'trot_working',     name: 'Munkaügetés',        color: '#356139', dash: false },
+  { id: 'trot_rising',      name: 'Könnyített ügetés',   color: '#2f6f45', dash: false },
   { id: 'trot_medium',      name: 'Középütemű ügetés',  color: '#244c28', dash: false },
   { id: 'trot_extended',    name: 'Nyújtott ügetés',    color: '#173919', dash: false },
   { id: 'canter_collected', name: 'Gyűjtött vágta',     color: '#b07a1f', dash: false },
@@ -329,13 +329,13 @@ const GAITS = [
 ];
 
 const GAIT_SPEEDS_MPS = {
-  halt: 0,
   walk_collected: 1.25,
   walk_medium: 1.45,
   walk_extended: 1.7,
   walk_free: 1.55,
   trot_collected: 3.0,
   trot_working: 3.4,
+  trot_rising: 3.4,
   trot_medium: 3.9,
   trot_extended: 4.4,
   canter_collected: 4.7,
@@ -802,7 +802,6 @@ function getGaitSpeed(gaitId) {
 }
 
 function getMovementDurationSeconds(m) {
-  if (m.gait === 'halt') return 2;
   const speed = getGaitSpeed(m.gait);
   const len = getMovementLengthMeters(m);
   if (!speed || !len) return 1.5;
