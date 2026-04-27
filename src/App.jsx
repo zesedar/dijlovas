@@ -1472,6 +1472,7 @@ export default function App() {
   const [letterPickRequest, setLetterPickRequest] = useState(null);
   const playbackFrameRef = useRef(null);
   const fileInputRef = useRef(null);
+  const autoStartedEmptyProgramsRef = useRef(new Set());
 
   useEffect(() => {
     try {
@@ -1491,6 +1492,15 @@ export default function App() {
   }, []);
 
   const current = useMemo(() => programs.find(p => p.id === currentId), [programs, currentId]);
+
+  useEffect(() => {
+    if (!loaded || !current) return;
+    const count = current.movements?.length || 0;
+    if (count === 0 && !autoStartedEmptyProgramsRef.current.has(current.id)) {
+      autoStartedEmptyProgramsRef.current.add(current.id);
+      setEditing({ mode: 'new', seed: `auto-${current.id}` });
+    }
+  }, [loaded, current?.id]);
 
   useEffect(() => {
     const last = current?.movements?.[current.movements.length - 1]?.gait;
@@ -1620,6 +1630,14 @@ export default function App() {
   function beginNewMovement() {
     resetPlayback();
     setEditing({ mode: 'new', seed: Date.now().toString(36) });
+  }
+
+  function handlePrimaryAdd() {
+    if (!editing) {
+      beginNewMovement();
+      return;
+    }
+    savePreviewMovement();
   }
 
   function clearAllMovements() {
@@ -1806,18 +1824,12 @@ export default function App() {
                 <RotateCcw size={13}/>
               </button>
             )}
-            {editing && (
-              <button onClick={savePreviewMovement}
-                      disabled={!previewMovement || !!previewUnavailableReason}
-                      className="flex items-center gap-1.5 text-sm px-3 py-1.5 bg-forest text-cream rounded font-medium transition hover:bg-[#2a4d3a] disabled:bg-[#b1a58e] disabled:cursor-not-allowed shadow-sm"
-                      title={previewUnavailableReason || (editing.mode === 'new' ? 'Hozzáadás' : 'Mentés')}>
-                <Check size={15}/>
-                <span>{editing.mode === 'new' ? 'Hozzáadás' : 'Mentés'}</span>
-              </button>
-            )}
-            <button onClick={beginNewMovement}
-                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 bg-forest text-cream rounded font-medium transition hover:bg-[#2a4d3a] shadow-sm">
-              <Plus size={14}/> Új szakasz
+            <button onClick={handlePrimaryAdd}
+                    disabled={!!editing && (!previewMovement || !!previewUnavailableReason)}
+                    className="flex items-center gap-2 text-sm px-4 py-2 bg-forest text-cream rounded font-semibold transition hover:bg-[#2a4d3a] disabled:bg-[#b1a58e] disabled:cursor-not-allowed shadow-sm"
+                    title={editing ? (previewUnavailableReason || (editing.mode === 'new' ? 'Hozzáadás' : 'Mentés')) : 'Szakasz hozzáadásának indítása'}>
+              <Check size={16}/>
+              <span>{editing?.mode === 'edit' ? 'Mentés' : 'Hozzáadás'}</span>
             </button>
             <button onClick={clearAllMovements}
                     disabled={(current.movements || []).length === 0}
@@ -1927,10 +1939,6 @@ export default function App() {
               </div>
               <div className="text-[11px] text-[#5e5b54] mt-0.5">Össztáv: <strong className="text-charcoal tabular-nums">{formatDistance(totalDistanceMeters)}</strong></div>
             </div>
-            <button onClick={beginNewMovement}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-forest text-cream rounded text-xs font-medium hover:bg-[#2a4d3a] transition shadow-sm">
-              <Plus size={13} /> Új szakasz
-            </button>
           </div>
           {editing && (
             <div className="p-3 border-b border-[#d4c9a8] bg-paper">
@@ -1955,7 +1963,7 @@ export default function App() {
               <div className="p-6 text-center text-[#9a8e75]">
                 <BookOpen className="mx-auto mb-3 opacity-40" size={32} />
                 <div className="text-sm font-display italic">Még nincs mozgás</div>
-                <div className="text-xs mt-1">Kattints az „Új szakasz” gombra a kezdéshez</div>
+                <div className="text-xs mt-1">Kattints fent a „Hozzáadás” gombra a kezdéshez</div>
               </div>
             )}
             {(current.movements || []).map((m, idx) => (
@@ -1981,10 +1989,6 @@ export default function App() {
               </div>
               <div className="text-[11px] text-[#5e5b54]">Össztáv: <strong>{formatDistance(totalDistanceMeters)}</strong></div>
             </div>
-            <button onClick={beginNewMovement}
-                    className="flex items-center gap-1 px-2 py-1 bg-forest text-cream rounded text-xs font-medium">
-              <Plus size={13} /> Új szakasz
-            </button>
           </div>
           {editing && (
             <div className="p-3 border-b border-[#d4c9a8] bg-paper">
