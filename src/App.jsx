@@ -1617,6 +1617,27 @@ export default function App() {
     setPlayback({ active: false, elapsed: 0 });
   }
 
+  function beginNewMovement() {
+    resetPlayback();
+    setEditing({ mode: 'new', seed: Date.now().toString(36) });
+  }
+
+  function clearAllMovements() {
+    const count = current?.movements?.length || 0;
+    if (count === 0) return;
+    if (!confirm('Biztosan törlöd az összes felvitt szakaszt?')) return;
+    resetPlayback();
+    setEditing(null);
+    setPreviewMovement(null);
+    setHighlightedIdx(null);
+    updateCurrent({ movements: [] });
+  }
+
+  function printMiniatures() {
+    setDrawerOpen(false);
+    setTimeout(() => window.print(), 50);
+  }
+
   // Preview törlése amikor bezárul a form
   useEffect(() => {
     if (!editing) setPreviewMovement(null);
@@ -1715,7 +1736,8 @@ export default function App() {
         @media screen { .print-only { display: none !important; } }
         @media print {
           @page { size: A4; margin: 10mm; }
-          body { background: #ffffff !important; }
+          html, body, #root { width: 100% !important; min-height: auto !important; overflow: visible !important; }
+          body { background: #ffffff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
           .no-print, header, aside, main, .print-arena { display: none !important; }
           .print-only { display: block !important; color: #1a1a18; }
           .print-header { margin-bottom: 8mm; border-bottom: 1px solid #d4c9a8; padding-bottom: 4mm; }
@@ -1751,7 +1773,7 @@ export default function App() {
             {savingState === 'saving' && <span className="italic">mentés...</span>}
             {savingState === 'saved'  && <span className="text-forest flex items-center gap-1"><Check size={12}/>mentve</span>}
           </div>
-          <button onClick={() => window.print()} className="hidden md:flex p-2 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]" title="Nyomtatás">
+          <button onClick={printMiniatures} className="flex p-2 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]" title="Miniatűrök nyomtatása">
             <Printer size={16} />
           </button>
           <button onClick={exportJSON} className="hidden md:flex p-2 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]" title="Export JSON">
@@ -1771,7 +1793,7 @@ export default function App() {
           <div className="px-2 py-1 rounded bg-paper border border-[#d4c9a8] text-xs text-[#5e5b54]">
             Össztáv: <strong className="text-charcoal tabular-nums">{formatDistance(totalDistanceMeters)}</strong>
           </div>
-          <div className="ml-auto flex items-center gap-1.5">
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
             <button onClick={togglePlayback}
                     disabled={(current.movements || []).length === 0}
                     className="flex items-center gap-1.5 text-xs px-2 py-1 bg-forest text-cream rounded transition hover:bg-[#2a4d3a] disabled:bg-[#b1a58e] disabled:cursor-not-allowed">
@@ -1787,12 +1809,22 @@ export default function App() {
             {editing && (
               <button onClick={savePreviewMovement}
                       disabled={!previewMovement || !!previewUnavailableReason}
-                      className="flex items-center gap-1.5 text-xs px-2 py-1 bg-forest text-cream rounded transition hover:bg-[#2a4d3a] disabled:bg-[#b1a58e] disabled:cursor-not-allowed"
+                      className="flex items-center gap-1.5 text-sm px-3 py-1.5 bg-forest text-cream rounded font-medium transition hover:bg-[#2a4d3a] disabled:bg-[#b1a58e] disabled:cursor-not-allowed shadow-sm"
                       title={previewUnavailableReason || (editing.mode === 'new' ? 'Hozzáadás' : 'Mentés')}>
-                <Check size={13}/>
-                <span className="hidden sm:inline">{editing.mode === 'new' ? 'Hozzáadás' : 'Mentés'}</span>
+                <Check size={15}/>
+                <span>{editing.mode === 'new' ? 'Hozzáadás' : 'Mentés'}</span>
               </button>
             )}
+            <button onClick={beginNewMovement}
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 bg-forest text-cream rounded font-medium transition hover:bg-[#2a4d3a] shadow-sm">
+              <Plus size={14}/> Új szakasz
+            </button>
+            <button onClick={clearAllMovements}
+                    disabled={(current.movements || []).length === 0}
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 bg-[#922c2c] text-cream rounded font-medium transition hover:bg-[#741f1f] disabled:bg-[#c9b8b0] disabled:cursor-not-allowed shadow-sm"
+                    title="Az összes felvitt szakasz törlése">
+              <Trash2 size={14}/> Mindent töröl
+            </button>
           </div>
           <div className="flex items-center gap-1 rounded border border-[#d4c9a8] bg-paper p-0.5">
             {[
@@ -1895,7 +1927,7 @@ export default function App() {
               </div>
               <div className="text-[11px] text-[#5e5b54] mt-0.5">Össztáv: <strong className="text-charcoal tabular-nums">{formatDistance(totalDistanceMeters)}</strong></div>
             </div>
-            <button onClick={() => { resetPlayback(); setEditing({ mode: 'new', seed: Date.now().toString(36) }); }}
+            <button onClick={beginNewMovement}
                     className="flex items-center gap-1 px-3 py-1.5 bg-forest text-cream rounded text-xs font-medium hover:bg-[#2a4d3a] transition shadow-sm">
               <Plus size={13} /> Új szakasz
             </button>
@@ -1949,7 +1981,7 @@ export default function App() {
               </div>
               <div className="text-[11px] text-[#5e5b54]">Össztáv: <strong>{formatDistance(totalDistanceMeters)}</strong></div>
             </div>
-            <button onClick={() => { resetPlayback(); setEditing({ mode: 'new', seed: Date.now().toString(36) }); }}
+            <button onClick={beginNewMovement}
                     className="flex items-center gap-1 px-2 py-1 bg-forest text-cream rounded text-xs font-medium">
               <Plus size={13} /> Új szakasz
             </button>
@@ -2010,6 +2042,10 @@ export default function App() {
               <button onClick={newProgram}
                       className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-forest text-cream rounded text-sm">
                 <Plus size={14}/> Új program
+              </button>
+              <button onClick={printMiniatures}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 border border-[#d4c9a8] text-[#5e5b54] rounded text-sm">
+                <Printer size={14}/> Miniatűrök nyomtatása
               </button>
               <button onClick={() => { exportJSON(); setDrawerOpen(false); }}
                       className="w-full flex items-center justify-center gap-1.5 px-3 py-2 border border-[#d4c9a8] text-[#5e5b54] rounded text-sm">
