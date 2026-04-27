@@ -66,6 +66,75 @@ const DIAGONAL_OPTIONS = [
 
 const VALID_DIAGONAL_STARTS = ['K', 'F', 'H', 'M'];
 
+// ════════════════════════════════════════════════════════════
+// KONTEXTUS-ÉRZÉKENY LOGIKA – mit lehet csinálni egy adott pontból
+// ════════════════════════════════════════════════════════════
+const START_POSITION = 'X';   // a ló mindig X-ből indul
+
+// Alapértelmezett "tipikus" végpont az adott kezdőpontból
+const DEFAULT_NEXT = {
+  X: 'C',  A: 'C',  C: 'A',
+  K: 'E',  E: 'B',  H: 'C',
+  F: 'B',  B: 'E',  M: 'B',
+  D: 'A',  G: 'C',
+};
+function getDefaultEndFor(pos) {
+  return DEFAULT_NEXT[pos] || 'C';
+}
+
+// Adott pontból elérhető-e az adott mozgástípus?
+function isTypeAvailableFrom(typeId, pos) {
+  switch (typeId) {
+    case 'straight':         return true;
+    case 'centerline':       return pos === 'A' || pos === 'C';
+    case 'half_school':      return pos === 'E' || pos === 'B';
+    case 'small_circle_8':
+    case 'small_circle_10':
+    case 'small_circle_15':
+    case 'large_circle':     return true;
+    case 'diagonal':         return VALID_DIAGONAL_STARTS.includes(pos);
+    case 'half_diagonal':    return VALID_DIAGONAL_STARTS.includes(pos);
+    case 'change_in_circle': return ['A','C','E','B'].includes(pos);
+    default:                 return true;
+  }
+}
+
+// Amikor a típust választjuk, a paraméterek automatikusan beállnak a kezdőpont szerint
+function autoParamsForType(typeId, pos, prev) {
+  const td = MOVEMENT_TYPES.find(t => t.id === typeId);
+  const updates = { type: typeId };
+  switch (td?.mode) {
+    case 'straight':
+      updates.startLetter = pos;
+      // Ha az előző state-ben volt értelmes endLetter (és nem azonos a kezdőponttal), tartsuk meg
+      updates.endLetter = (prev?.endLetter && prev.endLetter !== pos)
+        ? prev.endLetter
+        : getDefaultEndFor(pos);
+      break;
+    case 'half_diagonal':
+      updates.startLetter = pos;
+      updates.endLetter   = pos === 'X' ? 'C' : 'X'; // sarokból X-be megy
+      break;
+    case 'centerline':
+      updates.choice = pos === 'A' ? 'A_C' : 'C_A';
+      break;
+    case 'half_school':
+      updates.choice = pos === 'E' ? 'E_B' : 'B_E';
+      break;
+    case 'diagonal': {
+      const opt = DIAGONAL_OPTIONS.find(d => d.from === pos);
+      updates.choice = opt?.id || 'KXM';
+      break;
+    }
+    case 'circle':
+    case 'change_in_circle':
+      updates.centerLetter = pos;
+      break;
+    default: break;
+  }
+  return updates;
+}
+
 const GAITS = [
   { id: 'halt',             name: 'Megállás',           color: '#5e5b54', dash: false },
   { id: 'walk_collected',   name: 'Gyűjtött lépés',     color: '#4a6fa5', dash: true  },
@@ -369,7 +438,7 @@ function getMovementMidpoint(m) {
 // ════════════════════════════════════════════════════════════
 // SVG PÁLYA
 // ════════════════════════════════════════════════════════════
-function Arena({ movements, highlightedIdx, showAll }) {
+function Arena({ movements, highlightedIdx, showAll, previewMovement }) {
   const padX = 4.5, padY = 4.5;
   return (
     <svg viewBox={`${-padX} ${-padY} ${20 + padX * 2} ${ARENA_LEN + padY * 2}`} className="w-full h-full" style={{ maxHeight: '100%' }}>
@@ -425,6 +494,26 @@ function Arena({ movements, highlightedIdx, showAll }) {
         );
       })}
 
+      {/* ÉLŐ PREVIEW – a most szerkesztett mozgás szaggatott zöld vonalként */}
+      {previewMovement && (() => {
+        const path = generatePath(previewMovement);
+        if (!path) return null;
+        const start = LETTERS[getMovementStart(previewMovement)];
+        return (
+          <g>
+            <path d={path} fill="none" stroke="#2e5f3e"
+                  strokeWidth={0.55}
+                  strokeOpacity={0.7}
+                  strokeLinecap="round" strokeLinejoin="round"
+                  strokeDasharray="0.5 0.4" />
+            {start && (
+              <circle cx={start.x} cy={start.y} r={0.7}
+                      fill="#2e5f3e" fillOpacity={0.7} />
+            )}
+          </g>
+        );
+      })()}
+
       {Object.entries(LETTERS).map(([letter, pos]) => {
         const onLeft   = pos.x === 0;
         const onRight  = pos.x === 20;
@@ -467,17 +556,58 @@ function Arena({ movements, highlightedIdx, showAll }) {
 // ════════════════════════════════════════════════════════════
 // MOZGÁS-SZERKESZTŐ FORM
 // ════════════════════════════════════════════════════════════
-function MovementForm({ initial, previousEndLetter, onSave, onCancel }) {
+function buildPayloadFromState(state, currentPos, initialId) {
+  const td = MOVEMENT_TYPES.find(t => t.id === state.type);
+  const payload = {
+    id: initialId || Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+    type: state.type,
+    gait: state.gait,
+    notes: state.notes,
+  };
+  if (!td) return payload;
+  switch (td.mode) {
+    case 'straight':
+      payload.startLetter = currentPos;
+      payload.endLetter   = state.endLetter;
+      payload.exitMode    = state.exitMode;
+      payload.variant     = state.variant;
+      break;
+    case 'centerline':
+    case 'half_school':
+    case 'diagonal':
+      payload.choice = state.choice;
+      break;
+    case 'half_diagonal':
+      payload.startLetter = currentPos;
+      payload.endLetter   = state.endLetter;
+      break;
+    case 'circle':
+    case 'change_in_circle':
+      payload.centerLetter = currentPos;
+      break;
+  }
+  return payload;
+}
+
+function MovementForm({ initial, currentPos, onSave, onCancel, onPreview }) {
   const letterKeys = Object.keys(LETTERS);
+
+  // A szerkesztett mozgás kezdőpontja: ha edit módban van, az initial-ből, egyébként a currentPos
+  const effectivePos = initial
+    ? (getMovementStart(initial) || currentPos || START_POSITION)
+    : (currentPos || START_POSITION);
 
   const [state, setState] = useState(() => {
     if (initial) return { ...initial };
+    // Kezdő típus: ha a sarokponton van → szabad választás, default 'straight'
+    const initType = 'straight';
+    const auto = autoParamsForType(initType, effectivePos, null);
     return {
-      type: 'straight',
-      startLetter: previousEndLetter || 'A',
-      endLetter:   'C',
-      centerLetter:'X',
-      choice:      null,
+      type:        initType,
+      startLetter: effectivePos,
+      endLetter:   auto.endLetter || getDefaultEndFor(effectivePos),
+      centerLetter: effectivePos,
+      choice:      auto.choice || null,
       variant:     'auto',
       exitMode:    'centerline',
       gait:        'trot_working',
@@ -486,114 +616,77 @@ function MovementForm({ initial, previousEndLetter, onSave, onCancel }) {
   });
 
   const update = (patch) => setState(s => ({ ...s, ...patch }));
-
   const typeDef = MOVEMENT_TYPES.find(t => t.id === state.type);
 
-  const diagonalDisabled = !initial && (!previousEndLetter || !VALID_DIAGONAL_STARTS.includes(previousEndLetter));
+  // Élő preview: ha a state változik, küldünk egy "ideiglenes mozgást" felfelé
+  useEffect(() => {
+    if (!onPreview) return;
+    const payload = buildPayloadFromState(state, effectivePos, initial?.id || 'preview');
+    onPreview(payload);
+  }, [state, effectivePos]);
+
+  // Form bezáráskor töröljük a preview-t
+  useEffect(() => () => { if (onPreview) onPreview(null); }, []);
 
   function handleSelectType(newType) {
-    const td = MOVEMENT_TYPES.find(t => t.id === newType);
-    const updates = { type: newType };
-    switch (td?.mode) {
-      case 'centerline':
-        if (!CENTERLINE_OPTIONS.find(c => c.id === state.choice)) updates.choice = 'A_C';
-        break;
-      case 'half_school':
-        if (!HALF_SCHOOL_OPTIONS.find(h => h.id === state.choice)) updates.choice = 'E_B';
-        break;
-      case 'diagonal': {
-        const valid = previousEndLetter
-          ? DIAGONAL_OPTIONS.find(d => d.from === previousEndLetter)
-          : null;
-        updates.choice = valid?.id || 'KXM';
-        break;
-      }
-      default: break;
-    }
+    const updates = autoParamsForType(newType, effectivePos, state);
     update(updates);
   }
 
   function handleSave() {
-    const td = MOVEMENT_TYPES.find(t => t.id === state.type);
-    const payload = {
-      id: initial?.id || Date.now().toString(36) + Math.random().toString(36).slice(2,6),
-      type: state.type,
-      gait: state.gait,
-      notes: state.notes,
-    };
-    switch (td.mode) {
-      case 'straight':
-        payload.startLetter = state.startLetter;
-        payload.endLetter   = state.endLetter;
-        payload.exitMode    = state.exitMode;
-        payload.variant     = state.variant;
-        break;
-      case 'centerline':
-      case 'half_school':
-      case 'diagonal':
-        payload.choice = state.choice;
-        break;
-      case 'half_diagonal':
-        payload.startLetter = state.startLetter;
-        payload.endLetter   = state.endLetter;
-        break;
-      case 'circle':
-      case 'change_in_circle':
-        payload.centerLetter = state.centerLetter;
-        break;
-    }
-    onSave(payload);
+    onSave(buildPayloadFromState(state, effectivePos, initial?.id));
   }
 
   const inputClass = "w-full px-3 py-2 bg-paper border border-[#d4c9a8] rounded text-charcoal focus:outline-none focus:border-forest focus:ring-1 focus:ring-forest/30 transition";
   const labelClass = "block text-[11px] font-medium text-[#5e5b54] uppercase tracking-wider mb-1";
 
   const straightInfo = useMemo(() => {
-    if (typeDef.mode !== 'straight') return null;
-    const sInt = isInterior(state.startLetter);
+    if (typeDef?.mode !== 'straight') return null;
+    const sInt = isInterior(effectivePos);
     const eInt = isInterior(state.endLetter);
     return {
       bothInterior: sInt && eInt,
       bothExterior: !sInt && !eInt,
       mixed:        sInt !== eInt,
     };
-  }, [typeDef, state.startLetter, state.endLetter]);
+  }, [typeDef, effectivePos, state.endLetter]);
 
   return (
     <div className="space-y-3">
+      {/* AKTUÁLIS POZÍCIÓ – kiemelt badge */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-[#f0eadc] border border-[#d4c9a8] rounded">
+        <span className="text-[11px] uppercase tracking-wider text-[#5e5b54] font-medium">Innen indulsz</span>
+        <span className="px-2.5 py-0.5 bg-forest text-cream rounded font-display italic font-bold tracking-wider text-sm">
+          {effectivePos}
+        </span>
+        {effectivePos === START_POSITION && !initial && (
+          <span className="text-[11px] text-[#9a8e75] italic">(belovaglás után)</span>
+        )}
+      </div>
+
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
-          <label className={labelClass}>Mozgás típusa</label>
+          <label className={labelClass}>Mit csinálsz innen?</label>
           <select className={inputClass} value={state.type} onChange={e => handleSelectType(e.target.value)}>
             {MOVEMENT_TYPES.map(t => {
-              const isDisabled = t.id === 'diagonal' && diagonalDisabled;
+              const available = isTypeAvailableFrom(t.id, effectivePos);
               return (
-                <option key={t.id} value={t.id} disabled={isDisabled}>
-                  {t.name}{isDisabled ? '  — sarokponton kell lenni (K/F/H/M)' : ''}
+                <option key={t.id} value={t.id} disabled={!available}>
+                  {t.name}{!available ? '  — innen nem' : ''}
                 </option>
               );
             })}
           </select>
-          {state.type === 'diagonal' && diagonalDisabled && (
-            <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-[#925a1a]">
-              <AlertCircle size={12} className="mt-0.5 flex-none" />
-              <span>Átlóváltás csak K, F, H vagy M sarokpontból indítható.</span>
-            </div>
-          )}
         </div>
 
         {typeDef.mode === 'straight' && (
           <>
-            <div>
-              <label className={labelClass}>Kezdő betű</label>
-              <select className={inputClass} value={state.startLetter} onChange={e => update({ startLetter: e.target.value })}>
-                {letterKeys.map(k => <option key={k} value={k}>{k}{isInterior(k) ? ' (belső)' : ''}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={labelClass}>Záró betű</label>
+            <div className="col-span-2">
+              <label className={labelClass}>Hová mész egyenesen?</label>
               <select className={inputClass} value={state.endLetter} onChange={e => update({ endLetter: e.target.value })}>
-                {letterKeys.map(k => <option key={k} value={k}>{k}{isInterior(k) ? ' (belső)' : ''}</option>)}
+                {letterKeys.filter(k => k !== effectivePos).map(k => (
+                  <option key={k} value={k}>{k}{isInterior(k) ? ' (belső)' : ''}</option>
+                ))}
               </select>
             </div>
 
@@ -642,7 +735,7 @@ function MovementForm({ initial, previousEndLetter, onSave, onCancel }) {
 
             {straightInfo?.bothExterior && (
               <div className="col-span-2">
-                <label className={labelClass}>Karám menti irány</label>
+                <label className={labelClass}>Karám menti irány (jobbra / balra)</label>
                 <select className={inputClass} value={state.variant} onChange={e => update({ variant: e.target.value })}>
                   <option value="auto">Rövidebb úton (auto)</option>
                   <option value="alt">Másik (hosszabb) úton</option>
@@ -653,62 +746,40 @@ function MovementForm({ initial, previousEndLetter, onSave, onCancel }) {
         )}
 
         {typeDef.mode === 'centerline' && (
-          <div className="col-span-2">
-            <label className={labelClass}>Irány</label>
-            <select className={inputClass} value={state.choice || 'A_C'} onChange={e => update({ choice: e.target.value })}>
-              {CENTERLINE_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-            </select>
+          <div className="col-span-2 px-2.5 py-2 text-[12px] text-forest italic bg-[#f5f0e0] border border-[#d4c9a8] rounded">
+            <strong className="not-italic font-medium">Automatikus:</strong>{' '}
+            {effectivePos === 'A' ? 'Belovaglás A → C (középvonalon)' : 'Kilovaglás C → A (középvonalon)'}
           </div>
         )}
 
         {typeDef.mode === 'half_school' && (
-          <div className="col-span-2">
-            <label className={labelClass}>Irány</label>
-            <select className={inputClass} value={state.choice || 'E_B'} onChange={e => update({ choice: e.target.value })}>
-              {HALF_SCHOOL_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-            </select>
+          <div className="col-span-2 px-2.5 py-2 text-[12px] text-forest italic bg-[#f5f0e0] border border-[#d4c9a8] rounded">
+            <strong className="not-italic font-medium">Automatikus:</strong>{' '}
+            Félpálya {effectivePos === 'E' ? 'E → B' : 'B → E'}
           </div>
         )}
 
         {typeDef.mode === 'diagonal' && (
-          <div className="col-span-2">
-            <label className={labelClass}>Átló</label>
-            <select className={inputClass} value={state.choice || 'KXM'} onChange={e => update({ choice: e.target.value })}>
-              {DIAGONAL_OPTIONS.map(o => {
-                const incompatible = !initial && previousEndLetter && o.from !== previousEndLetter;
-                return (
-                  <option key={o.id} value={o.id} disabled={incompatible}>
-                    {o.label}{incompatible ? '  — nem ettől a ponttól' : ''}
-                  </option>
-                );
-              })}
-            </select>
+          <div className="col-span-2 px-2.5 py-2 text-[12px] text-forest italic bg-[#f5f0e0] border border-[#d4c9a8] rounded">
+            <strong className="not-italic font-medium">Automatikus átló:</strong>{' '}
+            {DIAGONAL_OPTIONS.find(d => d.id === state.choice)?.label || ''}
           </div>
         )}
 
         {typeDef.mode === 'half_diagonal' && (
-          <>
-            <div>
-              <label className={labelClass}>Kezdő betű</label>
-              <select className={inputClass} value={state.startLetter} onChange={e => update({ startLetter: e.target.value })}>
-                {letterKeys.map(k => <option key={k} value={k}>{k}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={labelClass}>Záró betű</label>
-              <select className={inputClass} value={state.endLetter} onChange={e => update({ endLetter: e.target.value })}>
-                {letterKeys.map(k => <option key={k} value={k}>{k}</option>)}
-              </select>
-            </div>
-          </>
+          <div className="col-span-2">
+            <label className={labelClass}>Félátló végpontja</label>
+            <select className={inputClass} value={state.endLetter} onChange={e => update({ endLetter: e.target.value })}>
+              {letterKeys.filter(k => k !== effectivePos).map(k => (
+                <option key={k} value={k}>{k}</option>
+              ))}
+            </select>
+          </div>
         )}
 
         {(typeDef.mode === 'circle' || typeDef.mode === 'change_in_circle') && (
-          <div className="col-span-2">
-            <label className={labelClass}>Központ (mely betűnél)</label>
-            <select className={inputClass} value={state.centerLetter} onChange={e => update({ centerLetter: e.target.value })}>
-              {letterKeys.map(k => <option key={k} value={k}>{k}</option>)}
-            </select>
+          <div className="col-span-2 px-2.5 py-2 text-[12px] text-forest italic bg-[#f5f0e0] border border-[#d4c9a8] rounded">
+            <strong className="not-italic font-medium">{typeDef.name}</strong> {effectivePos}-nél
           </div>
         )}
 
@@ -824,6 +895,7 @@ export default function App() {
   const [drawerOpen, setDrawerOpen]         = useState(false);
   const [loaded, setLoaded]                 = useState(false);
   const [savingState, setSavingState]       = useState('idle');
+  const [previewMovement, setPreviewMovement] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -858,21 +930,25 @@ export default function App() {
   const continuityFlags = useMemo(() => {
     if (!current?.movements) return [];
     return current.movements.map((m, idx) => {
-      if (idx === 0) return true;
-      const prevEnd  = getMovementEnd(current.movements[idx - 1]);
+      const prevEnd = idx === 0 ? START_POSITION : getMovementEnd(current.movements[idx - 1]);
       const currStart = getMovementStart(m);
       return prevEnd === currStart;
     });
   }, [current]);
 
-  const previousEndLetter = useMemo(() => {
-    if (!current) return null;
+  const currentPos = useMemo(() => {
+    if (!current) return START_POSITION;
     const ms = current.movements || [];
     if (editing?.mode === 'edit') {
-      return editing.idx > 0 ? getMovementEnd(ms[editing.idx - 1]) : null;
+      return editing.idx > 0 ? getMovementEnd(ms[editing.idx - 1]) : START_POSITION;
     }
-    return ms.length > 0 ? getMovementEnd(ms[ms.length - 1]) : null;
+    return ms.length > 0 ? getMovementEnd(ms[ms.length - 1]) : START_POSITION;
   }, [current, editing]);
+
+  // Preview törlése amikor bezárul a form
+  useEffect(() => {
+    if (!editing) setPreviewMovement(null);
+  }, [editing]);
 
   function updateCurrent(patch) {
     setPrograms(ps => ps.map(p => p.id === currentId ? { ...p, ...patch, updatedAt: Date.now() } : p));
@@ -1041,7 +1117,7 @@ export default function App() {
 
         <section className="flex-1 flex items-center justify-center p-4 md:p-6 min-h-[400px] print-arena">
           <div className="w-full h-full max-w-md flex items-center justify-center" style={{ aspectRatio: '20/40' }}>
-            <Arena movements={current.movements || []} highlightedIdx={highlightedIdx} showAll={showAll} />
+            <Arena movements={current.movements || []} highlightedIdx={highlightedIdx} showAll={showAll} previewMovement={previewMovement} />
           </div>
         </section>
 
@@ -1059,17 +1135,13 @@ export default function App() {
             <div className="p-3 border-b border-[#d4c9a8] bg-paper">
               <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium mb-2">
                 {editing.mode === 'new' ? 'Új mozgás' : `${editing.idx + 1}. mozgás szerkesztése`}
-                {previousEndLetter && (
-                  <span className="ml-2 normal-case font-normal text-[#9a8e75] tracking-normal">
-                    (előző végpont: <strong>{previousEndLetter}</strong>)
-                  </span>
-                )}
               </div>
               <MovementForm
                 initial={editing.mode === 'edit' ? current.movements[editing.idx] : null}
-                previousEndLetter={previousEndLetter}
+                currentPos={currentPos}
                 onSave={m => editing.mode === 'new' ? addMovement(m) : updateMovement(editing.idx, m)}
                 onCancel={() => setEditing(null)}
+                onPreview={setPreviewMovement}
               />
             </div>
           )}
@@ -1108,16 +1180,12 @@ export default function App() {
           </div>
           {editing && (
             <div className="p-3 border-b border-[#d4c9a8] bg-paper">
-              {previousEndLetter && (
-                <div className="text-[11px] text-[#9a8e75] italic mb-2">
-                  (előző végpont: <strong>{previousEndLetter}</strong>)
-                </div>
-              )}
               <MovementForm
                 initial={editing.mode === 'edit' ? current.movements[editing.idx] : null}
-                previousEndLetter={previousEndLetter}
+                currentPos={currentPos}
                 onSave={m => editing.mode === 'new' ? addMovement(m) : updateMovement(editing.idx, m)}
                 onCancel={() => setEditing(null)}
+                onPreview={setPreviewMovement}
               />
             </div>
           )}
