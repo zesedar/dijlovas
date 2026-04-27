@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  base '/dijlovas/',
+  
   plugins: [
     react(),
     VitePWA({
@@ -19,8 +21,8 @@ export default defineConfig({
         background_color: '#faf6ec',
         display: 'standalone',
         orientation: 'portrait',
-        scope: '/',
-        start_url: '/',
+        scope: '/dijlovas/',
+        start_url: '/dijlovas/',
         lang: 'hu',
         categories: ['sports', 'productivity', 'lifestyle'],
         icons: [
