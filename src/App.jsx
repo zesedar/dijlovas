@@ -881,7 +881,7 @@ function Arena({
   const visibleSet = visibleIndices ? new Set(visibleIndices) : null;
   const shouldShowMovement = (idx) => visibleSet ? visibleSet.has(idx) : (showAll || idx === highlightedIdx);
   return (
-    <svg viewBox={`${-padX} ${-padY} ${20 + padX * 2} ${ARENA_LEN + padY * 2}`} className="w-full h-full" style={{ maxHeight: '100%' }}>
+    <svg viewBox={`${-padX} ${-padY} ${20 + padX * 2} ${ARENA_LEN + padY * 2}`} className="block w-full h-full" style={{ maxHeight: '100%' }}>
       <defs>
         <marker id={markerId} viewBox="0 0 4 4" refX="3.35" refY="2"
                 markerWidth="4" markerHeight="4" orient="auto" markerUnits="strokeWidth">
@@ -1493,6 +1493,15 @@ export default function App() {
 
   const current = useMemo(() => programs.find(p => p.id === currentId), [programs, currentId]);
 
+  // Programváltáskor ne maradjon nyitva az előző program szerkesztője/preview-ja.
+  // Ez megakadályozza, hogy a jobb oldali panel magassága átméretezze a középső pályát.
+  useEffect(() => {
+    setEditing(null);
+    setPreviewMovement(null);
+    setHighlightedIdx(null);
+    setLetterPickRequest(null);
+  }, [currentId]);
+
   useEffect(() => {
     if (!loaded || !current) return;
     const count = current.movements?.length || 0;
@@ -1749,7 +1758,7 @@ export default function App() {
   }
 
   return (
-    <div className="w-full min-h-screen bg-cream font-body text-charcoal flex flex-col">
+    <div className="w-full min-h-screen md:h-screen md:overflow-hidden bg-cream font-body text-charcoal flex flex-col">
       <style>{`
         @media screen { .print-only { display: none !important; } }
         @media print {
@@ -1878,7 +1887,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col md:flex-row min-h-0">
+      <main className="flex-1 flex flex-col md:flex-row min-h-0 md:overflow-hidden">
         <aside className="no-print hidden md:flex flex-col w-56 border-r border-[#d4c9a8] bg-[#f5f0e0]/40">
           <div className="p-3 flex items-center justify-between border-b border-[#d4c9a8]">
             <div className="text-xs uppercase tracking-wider text-[#5e5b54] font-medium">Programok</div>
@@ -1912,8 +1921,8 @@ export default function App() {
           </div>
         </aside>
 
-        <section className="flex-1 flex items-center justify-center p-4 md:p-6 min-h-[400px] print-arena">
-          <div className="w-full h-full max-w-md flex items-center justify-center" style={{ aspectRatio: '20/40' }}>
+        <section className="flex-1 flex items-center justify-center p-4 md:p-6 min-h-[400px] md:min-h-0 md:h-full md:overflow-hidden print-arena">
+          <div className="w-full max-w-md md:w-auto md:h-full md:max-h-full flex items-center justify-center" style={{ aspectRatio: '20 / 40' }}>
             <Arena
               movements={current.movements || []}
               highlightedIdx={playbackHighlightIdx ?? selectedDisplayIdx}
