@@ -1421,6 +1421,156 @@ function MovementListItem({ m, idx, total, isHi, isContinuous, onClick, onEdit, 
   );
 }
 
+function escapeXml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function safeFileName(value) {
+  return (value || 'program')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/gi, '_')
+    .replace(/^_+|_+$/g, '') || 'program';
+}
+
+function wrapSvgText(text, maxChars = 38, maxLines = 2) {
+  const words = String(text || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  if (!words.length) return [];
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (candidate.length <= maxChars) {
+      line = candidate;
+    } else {
+      if (line) lines.push(line);
+      line = word;
+      if (lines.length === maxLines) break;
+    }
+  }
+  if (line && lines.length < maxLines) lines.push(line);
+  if (words.join(' ').length > lines.join(' ').length && lines.length) {
+    lines[lines.length - 1] = lines[lines.length - 1].replace(/…?$/, '…');
+  }
+  return lines;
+}
+
+function miniArenaSvg(m, idx, x, y, w, h) {
+  const padX = 4.5;
+  const padTop = 3.4;
+  const padBottom = 4.1;
+  const viewW = 20 + padX * 2;
+  const viewH = ARENA_LEN + padTop + padBottom;
+  const scale = Math.min(w / viewW, h / viewH);
+  const tx = x + (w - viewW * scale) / 2 + padX * scale;
+  const ty = y + (h - viewH * scale) / 2 + padTop * scale;
+  const path = generatePath(m);
+  const mid = getMovementMidpoint(m);
+  const gait = GAITS.find(g => g.id === m.gait);
+  const color = gait?.color || '#5e5b54';
+  const dashed = gait?.dash ? ' stroke-dasharray="0.7 0.4"' : '';
+  const letters = Object.entries(LETTERS).map(([letter, pos]) => {
+    const onLeft = pos.x === 0;
+    const onRight = pos.x === 20;
+    const onShortA = pos.y === ARENA_LEN;
+    const onShortC = pos.y === 0;
+    const onCenter = pos.x === 10 && !onShortA && !onShortC;
+    let lx = pos.x;
+    let ly = pos.y;
+    if (onLeft) lx = -2.5;
+    else if (onRight) lx = 22.5;
+    else if (onShortA) ly = ARENA_LEN + 2.6;
+    else if (onShortC) ly = -2.0;
+    else if (onCenter) lx = 11.7;
+    const tick = !onCenter ? `<line x1="${onLeft ? 0 : onRight ? 20 : pos.x}" y1="${onShortA ? ARENA_LEN : onShortC ? 0 : pos.y}" x2="${onLeft ? -1.2 : onRight ? 21.2 : pos.x}" y2="${onShortA ? ARENA_LEN + 1 : onShortC ? -1 : pos.y}" stroke="#1a1a18" stroke-width="0.12"/>` : '';
+    return `${tick}<text x="${lx}" y="${ly}" font-size="${onCenter ? 2 : 2.6}" font-family="Georgia, serif" font-weight="${onCenter ? 500 : 700}" text-anchor="middle" dominant-baseline="central" fill="${onCenter ? '#9a8e75' : '#1a1a18'}" font-style="${onCenter ? 'italic' : 'normal'}">${letter}</text>`;
+  }).join('');
+
+  return `
+    <g transform="translate(${tx} ${ty}) scale(${scale})">
+      <rect x="${-padX}" y="${-padTop}" width="${viewW}" height="${viewH}" fill="#faf6ec"/>
+      <rect x="0" y="0" width="20" height="${ARENA_LEN}" fill="#ffffff" stroke="#1a1a18" stroke-width="0.18"/>
+      <rect x="1" y="1" width="18" height="${ARENA_LEN - 2}" fill="none" stroke="#d4c9a8" stroke-width="0.05" stroke-dasharray="0.6 0.4"/>
+      <line x1="10" y1="0" x2="10" y2="${ARENA_LEN}" stroke="#c9bfa3" stroke-width="0.05" stroke-dasharray="0.5 0.5"/>
+      <line x1="0" y1="${ARENA_LEN / 2}" x2="20" y2="${ARENA_LEN / 2}" stroke="#c9bfa3" stroke-width="0.05" stroke-dasharray="0.5 0.5"/>
+      <line x1="9.3" y1="${ARENA_LEN / 2 - 0.7}" x2="10.7" y2="${ARENA_LEN / 2 + 0.7}" stroke="#a89880" stroke-width="0.1"/>
+      <line x1="9.3" y1="${ARENA_LEN / 2 + 0.7}" x2="10.7" y2="${ARENA_LEN / 2 - 0.7}" stroke="#a89880" stroke-width="0.1"/>
+      ${path ? `<path d="${path}" fill="none" stroke="${color}" stroke-width="0.55" stroke-linecap="round" stroke-linejoin="round"${dashed} marker-end="url(#mini-arrow-${idx})"/>` : ''}
+      ${mid ? `<circle cx="${mid.x}" cy="${mid.y}" r="1.25" fill="#faf6ec" stroke="${color}" stroke-width="0.22"/><text x="${mid.x}" y="${mid.y}" font-size="1.35" font-family="Georgia, serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="${color}">${idx + 1}</text>` : ''}
+      ${letters}
+    </g>`;
+}
+
+function buildMiniaturesImageSvg(program) {
+  const movements = program?.movements || [];
+  const cols = Math.min(3, Math.max(1, movements.length || 1));
+  const rows = Math.max(1, Math.ceil((movements.length || 1) / cols));
+  const margin = 36;
+  const gap = 26;
+  const headerH = 78;
+  const cardW = 330;
+  const cardH = 500;
+  const width = margin * 2 + cols * cardW + (cols - 1) * gap;
+  const height = margin * 2 + headerH + rows * cardH + (rows - 1) * gap;
+  const title = escapeXml(program?.name || 'Díjlovagló program');
+  const subtitle = escapeXml(`20×40 m kis pálya${program?.level ? ` · ${program.level}` : ''} · ${movements.length} szakasz`);
+  const markers = movements.map((m, idx) => {
+    const gait = GAITS.find(g => g.id === m.gait);
+    const color = gait?.color || '#5e5b54';
+    return `<marker id="mini-arrow-${idx}" viewBox="0 0 4 4" refX="3.35" refY="2" markerWidth="4" markerHeight="4" orient="auto" markerUnits="strokeWidth"><path d="M 0 0 L 4 2 L 0 4 z" fill="${color}"/></marker>`;
+  }).join('');
+
+  const cards = movements.map((m, idx) => {
+    const col = idx % cols;
+    const row = Math.floor(idx / cols);
+    const x = margin + col * (cardW + gap);
+    const y = margin + headerH + row * (cardH + gap);
+    const arenaX = x + 28;
+    const arenaY = y + 18;
+    const arenaW = cardW - 56;
+    const arenaH = 355;
+    const gait = GAITS.find(g => g.id === m.gait);
+    const titleLines = wrapSvgText(`${idx + 1}. ${describeMovement(m)}`, 38, 2);
+    const noteLines = m.notes ? wrapSvgText(m.notes, 46, 1) : [];
+    const titleText = titleLines.map((line, i) => `<text x="${x + 18}" y="${y + arenaH + 58 + i * 21}" class="card-title">${escapeXml(line)}</text>`).join('');
+    const noteText = noteLines.map((line, i) => `<text x="${x + 18}" y="${y + arenaH + 118 + i * 18}" class="card-note">${escapeXml(line)}</text>`).join('');
+    return `
+      <g>
+        <rect x="${x}" y="${y}" width="${cardW}" height="${cardH}" rx="18" fill="#faf6ec" stroke="#d4c9a8" stroke-width="2"/>
+        ${miniArenaSvg(m, idx, arenaX, arenaY, arenaW, arenaH)}
+        ${titleText}
+        <text x="${x + 18}" y="${y + arenaH + 102}" class="card-subtitle">${escapeXml(gait?.name || '')}</text>
+        ${noteText}
+      </g>`;
+  }).join('');
+
+  return {
+    width,
+    height,
+    svg: `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <defs>${markers}</defs>
+  <style>
+    .main-title { font-family: Georgia, serif; font-size: 30px; font-weight: 700; fill: #1a1a18; }
+    .main-subtitle { font-family: Arial, sans-serif; font-size: 15px; fill: #5e5b54; }
+    .card-title { font-family: Georgia, serif; font-size: 16px; font-weight: 700; fill: #1a1a18; }
+    .card-subtitle { font-family: Arial, sans-serif; font-size: 13px; fill: #5e5b54; }
+    .card-note { font-family: Arial, sans-serif; font-size: 12px; font-style: italic; fill: #5e5b54; }
+  </style>
+  <rect width="100%" height="100%" fill="#ffffff"/>
+  <text x="${margin}" y="${margin + 30}" class="main-title">${title}</text>
+  <text x="${margin}" y="${margin + 55}" class="main-subtitle">${subtitle}</text>
+  <line x1="${margin}" y1="${margin + headerH - 12}" x2="${width - margin}" y2="${margin + headerH - 12}" stroke="#d4c9a8" stroke-width="2"/>
+  ${cards}
+</svg>`
+  };
+}
+
 function PrintView({ program }) {
   const movements = program?.movements || [];
   return (
@@ -1562,6 +1712,7 @@ export default function App() {
   const totalDistanceMeters = playbackPlan.totalDistance || 0;
   const playbackDistanceMeters = playbackMoment.distance || 0;
   const playbackGait = playbackMoment.movement ? GAITS.find(g => g.id === playbackMoment.movement.gait) : null;
+  const isPlaybackCompact = playback.active || playback.elapsed > 0;
 
   const selectedDisplayIdx = playback.active || playback.elapsed > 0
     ? playbackHighlightIdx
@@ -1667,6 +1818,66 @@ export default function App() {
     setTimeout(() => window.print(), 50);
   }
 
+  function downloadMiniaturesImage() {
+    const movements = current?.movements || [];
+    if (movements.length === 0) {
+      alert('Nincs még menthető miniatűr: előbb adj hozzá legalább egy mozgást.');
+      return;
+    }
+    setDrawerOpen(false);
+    const { svg, width, height } = buildMiniaturesImageSvg(current);
+    const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const svgUrl = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    img.onload = () => {
+      const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(width * pixelRatio);
+      canvas.height = Math.round(height * pixelRatio);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        URL.revokeObjectURL(svgUrl);
+        alert('A kép mentése nem sikerült.');
+        return;
+      }
+      ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+      const filename = `${safeFileName(current?.name || 'program')}_miniaturak.png`;
+      const saveBlob = (blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+      if (canvas.toBlob) {
+        canvas.toBlob(blob => {
+          if (blob) saveBlob(blob);
+          else {
+            const a = document.createElement('a');
+            a.href = canvas.toDataURL('image/png');
+            a.download = filename;
+            a.click();
+          }
+        }, 'image/png');
+      } else {
+        const a = document.createElement('a');
+        a.href = canvas.toDataURL('image/png');
+        a.download = filename;
+        a.click();
+      }
+      URL.revokeObjectURL(svgUrl);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(svgUrl);
+      alert('A kép mentése nem sikerült. Próbáld újra, vagy használd a nyomtatást.');
+    };
+    img.src = svgUrl;
+  }
+
   // Preview törlése amikor bezárul a form
   useEffect(() => {
     if (!editing) setPreviewMovement(null);
@@ -1745,7 +1956,12 @@ export default function App() {
           id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
           updatedAt: Date.now() });
         saveProgram(prog);
-        setPrograms(ps => [prog, ...ps]); setCurrentId(prog.id);
+        setPrograms(ps => [prog, ...ps]);
+        setCurrentId(prog.id);
+        setDrawerOpen(false);
+        setEditing(null);
+        setPreviewMovement(null);
+        resetPlayback();
       } catch { alert('Hibás JSON fájl'); }
     };
     reader.readAsText(file); e.target.value = '';
@@ -1783,7 +1999,7 @@ export default function App() {
       `}</style>
       <PrintView program={current} />
       <header className="no-print border-b border-[#d4c9a8] bg-[#f5f0e0]/60 backdrop-blur-sm sticky top-0 z-30">
-        <div className="px-4 md:px-6 py-3 flex items-center gap-3">
+        <div className={`${isPlaybackCompact ? 'hidden md:flex' : 'flex'} px-4 md:px-6 py-3 items-center gap-3`}>
           <button onClick={() => setDrawerOpen(true)}
                   className="md:hidden p-2 hover:bg-[#e8dfc8] rounded transition" title="Programok">
             <Folder size={18} />
@@ -1805,6 +2021,9 @@ export default function App() {
           <button onClick={printMiniatures} className="flex p-2 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]" title="Miniatűrök nyomtatása">
             <Printer size={16} />
           </button>
+          <button onClick={downloadMiniaturesImage} className="flex p-2 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]" title="Miniatűrök mentése képként">
+            <FileDown size={16} />
+          </button>
           <button onClick={exportJSON} className="hidden md:flex p-2 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]" title="Export JSON">
             <FileDown size={16} />
           </button>
@@ -1813,7 +2032,34 @@ export default function App() {
           </button>
           <input ref={fileInputRef} type="file" accept=".json,application/json" className="hidden" onChange={importJSON} />
         </div>
-        <div className="px-4 md:px-6 pb-3 flex flex-wrap items-center gap-2 text-sm">
+        {isPlaybackCompact && (
+          <div className="md:hidden px-4 py-2 border-t border-[#d4c9a8]/60 bg-[#f5f0e0]/70">
+            <div className="flex items-center gap-2">
+              <button onClick={togglePlayback}
+                      disabled={(current.movements || []).length === 0}
+                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-forest text-cream rounded transition hover:bg-[#2a4d3a] disabled:bg-[#b1a58e] disabled:cursor-not-allowed">
+                {playback.active ? <Pause size={13}/> : <Play size={13}/>}
+                {playback.active ? 'Szünet' : 'Folytatás'}
+              </button>
+              <button onClick={resetPlayback}
+                      className="flex items-center gap-1 text-xs px-2 py-1.5 hover:bg-[#e8dfc8] rounded transition text-[#5e5b54]" title="Lejátszás nullázása">
+                <RotateCcw size={13}/> Újra
+              </button>
+              <span className="ml-auto text-[11px] tabular-nums text-[#5e5b54]">{formatDuration(playback.elapsed)} / {formatDuration(playbackPlan.totalDuration)}</span>
+            </div>
+            <div className="mt-2 h-1.5 bg-[#e8dfc8] rounded-full overflow-hidden">
+              <div className="h-full bg-forest" style={{ width: `${playbackProgressPercent}%` }} />
+            </div>
+            <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-[#5e5b54]">
+              <span className="tabular-nums">{formatDistance(playbackDistanceMeters)} / {formatDistance(playbackPlan.totalDistance)}</span>
+              {playbackGait && <span className="font-medium text-forest truncate">{playbackGait.name}</span>}
+            </div>
+            {playbackMoment.movement?.notes && (
+              <div className="mt-1 text-xs text-[#5e5b54] italic truncate">{playbackMoment.movement.notes}</div>
+            )}
+          </div>
+        )}
+        <div className={`${isPlaybackCompact ? 'hidden md:flex' : 'flex'} px-4 md:px-6 pb-3 flex-wrap items-center gap-2 text-sm`}>
           <span className="text-xs text-[#9a8e75] italic mr-2">20×40 m kis pálya</span>
           <input type="text" value={current.level}
                  onChange={e => updateCurrent({ level: e.target.value })}
@@ -2062,9 +2308,17 @@ export default function App() {
                       className="w-full flex items-center justify-center gap-1.5 px-3 py-2 border border-[#d4c9a8] text-[#5e5b54] rounded text-sm">
                 <Printer size={14}/> Miniatűrök nyomtatása
               </button>
+              <button onClick={downloadMiniaturesImage}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 border border-[#d4c9a8] text-[#5e5b54] rounded text-sm">
+                <FileDown size={14}/> Miniatűrök mentése képként
+              </button>
               <button onClick={() => { exportJSON(); setDrawerOpen(false); }}
                       className="w-full flex items-center justify-center gap-1.5 px-3 py-2 border border-[#d4c9a8] text-[#5e5b54] rounded text-sm">
                 <FileDown size={14}/> Export
+              </button>
+              <button onClick={() => fileInputRef.current?.click()}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 border border-[#d4c9a8] text-[#5e5b54] rounded text-sm">
+                <FileUp size={14}/> Import
               </button>
             </div>
           </div>
