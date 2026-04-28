@@ -210,6 +210,18 @@ function getIncomingLongWallDirectionY(pos, previousMovement = null) {
   return -1;
 }
 
+function getFirstLongWallLetterForDirection(letter, directionY) {
+  const seq = getLongWallSequence(letter);
+  if (!seq.length) return null;
+  // y csökkenése: K/F → E/B → H/M; y növekedése: H/M → E/B → K/F
+  return directionY < 0 ? seq[0] : seq[seq.length - 1];
+}
+
+function isFirstLongWallLetterForDirection(letter, previousMovement = null, directionYOverride = null) {
+  const directionY = directionYOverride || getIncomingLongWallDirectionY(letter, previousMovement);
+  return getFirstLongWallLetterForDirection(letter, directionY) === letter;
+}
+
 function getChangeReinEndLetter(startLetter, previousMovement = null, directionYOverride = null) {
   const seq = getLongWallSequence(startLetter);
   const idx = seq.indexOf(startLetter);
@@ -331,7 +343,9 @@ function unavailableReasonForType(typeId, pos, previousMovement = null) {
       break;
     case 'change_rein':
       reason = CHANGE_REIN_STARTS.includes(pos)
-        ? null
+        ? (isFirstLongWallLetterForDirection(pos, previousMovement)
+          ? 'a menetirány szerinti első betűnél még nincs elég hely az átváltáshoz'
+          : null)
         : 'átváltás csak hosszúfalról indítható: K, E, H, F, B vagy M';
       break;
     case 'diagonal':
@@ -825,12 +839,12 @@ function generateChangeInCirclePoints(m, segments = 24) {
 
 function getSerpentineDepth(arcs) {
   const arcCount = Math.max(1, Math.round(arcs || 1));
-  if (arcCount === 1) return 5;   // E/B és X közti félvonalig
-  if (arcCount === 2) return 10;  // középvonalig
-  return 20;                      // szemközti hosszú falig
+  if (arcCount === 1) return 3.2; // keskeny egyívű kígyóvonal
+  if (arcCount === 2) return 3.2; // kétívű: legfeljebb az egyívű oldalkitérése
+  return 20;                      // háromívű: szemközti hosszú falig
 }
 
-function generateSerpentinePoints(m, arcs = 1, segmentsPerArc = 28) {
+function generateSerpentinePoints(m, arcs = 1, segmentsPerArc = 36) {
   const startLetter = m.startLetter;
   const endLetter = m.endLetter || getSerpentineEndLetter(startLetter);
   const a = LETTERS[startLetter], b = LETTERS[endLetter];
@@ -838,13 +852,16 @@ function generateSerpentinePoints(m, arcs = 1, segmentsPerArc = 28) {
   if (!a || !b || !opt) return [];
 
   const arcCount = Math.max(1, Math.round(arcs || m.serpentineArcs || 1));
-  const segments = Math.max(16, arcCount * segmentsPerArc);
+  const segments = Math.max(24, arcCount * segmentsPerArc);
   const depth = getSerpentineDepth(arcCount);
   const pts = [];
 
   for (let i = 0; i <= segments; i++) {
     const t = i / segments;
-    const x = a.x + (b.x - a.x) * t + opt.inwardX * depth * Math.abs(Math.sin(Math.PI * arcCount * t));
+    // sin²: a hosszú falakat függőleges érintővel, „fél kiskör” jelleggel érinti,
+    // nem hegyesen törik be a falról.
+    const wallTouchingArc = Math.sin(Math.PI * arcCount * t) ** 2;
+    const x = a.x + (b.x - a.x) * t + opt.inwardX * depth * wallTouchingArc;
     const y = a.y + (b.y - a.y) * t;
     pts.push({ x, y });
   }
