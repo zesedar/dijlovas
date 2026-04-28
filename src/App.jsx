@@ -841,7 +841,143 @@ function getSerpentineDepth(arcs) {
   const arcCount = Math.max(1, Math.round(arcs || 1));
   if (arcCount === 1) return 3.2; // keskeny egyívű kígyóvonal
   if (arcCount === 2) return 3.2; // kétívű: legfeljebb az egyívű oldalkitérése
-  return 20;                      // háromívű: szemközti hosszú falig
+  return 20;                      // tartalékérték; a háromívűt külön generátor rajzolja
+}
+
+function appendPoints(target, pts) {
+  if (!pts?.length) return;
+  if (!target.length) {
+    target.push(...pts);
+  } else {
+    target.push(...pts.slice(1));
+  }
+}
+
+function generateArcByAngles(center, radius, startAngle, endAngle, segments = 24, mapPoint = p => p) {
+  const pts = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const angle = startAngle + (endAngle - startAngle) * t;
+    pts.push(mapPoint({
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius,
+    }));
+  }
+  return pts;
+}
+
+function generateThreeLoopSerpentinePoints(m, segmentsPerQuarter = 18, segmentsPerHalf = 32) {
+  const startLetter = m.startLetter;
+  const endLetter = m.endLetter || getSerpentineEndLetter(startLetter);
+  const a = LETTERS[startLetter];
+  const b = LETTERS[endLetter];
+  const opt = SERPENTINE_OPTIONS[startLetter];
+
+  if (!a || !b || !opt) return [];
+
+  // Háromívű kígyóvonal azonos hosszúfalra visszaérve:
+  // 1/4 kiskör → egyenes → 1/2 kiskör → egyenes →
+  // 1/2 kiskör → egyenes → 1/2 kiskör → egyenes → 1/4 kiskör.
+  //
+  // A H–K / K–H / F–M / M–F szakasz hossza 28 m.
+  // A fenti rajzolat függőleges vetülete 8 sugár, ezért a sugár 28 / 8 = 3,5 m.
+  // Így a vonal pontosan a kezdővel azonos hosszúfal betűjére fut ki.
+  const spanY = Math.abs(b.y - a.y);
+  const radius = spanY / 8;
+  const mirrorX = a.x === 0; // bal hosszúfalról indulva tükrözzük a jobb oldali alapsémát
+  const directionY = Math.sign(b.y - a.y) || opt.directionY || 1;
+
+  const toWorld = (p) => ({
+    x: mirrorX ? 20 - p.x : p.x,
+    y: a.y + directionY * p.y,
+  });
+
+  const line = (x1, y1, x2, y2) => [
+    toWorld({ x: x1, y: y1 }),
+    toWorld({ x: x2, y: y2 }),
+  ];
+
+  const r = radius;
+  const pts = [];
+
+  // 1) Kezdő negyedkör: hosszúfalról befordul az átlós-egyenes irányba.
+  appendPoints(
+    pts,
+    generateArcByAngles(
+      { x: 20 - r, y: 0 },
+      r,
+      0,
+      Math.PI / 2,
+      segmentsPerQuarter,
+      toWorld
+    )
+  );
+
+  // 2) Egyenes a szemközti fal felé.
+  appendPoints(pts, line(20 - r, r, r, r));
+
+  // 3) Félkiskör a szemközti falnál.
+  appendPoints(
+    pts,
+    generateArcByAngles(
+      { x: r, y: 2 * r },
+      r,
+      -Math.PI / 2,
+      -3 * Math.PI / 2,
+      segmentsPerHalf,
+      toWorld
+    )
+  );
+
+  // 4) Egyenes vissza a kezdő oldali fal felé.
+  appendPoints(pts, line(r, 3 * r, 20 - r, 3 * r));
+
+  // 5) Félkiskör a kezdő oldali falnál.
+  appendPoints(
+    pts,
+    generateArcByAngles(
+      { x: 20 - r, y: 4 * r },
+      r,
+      -Math.PI / 2,
+      Math.PI / 2,
+      segmentsPerHalf,
+      toWorld
+    )
+  );
+
+  // 6) Egyenes megint a szemközti fal felé.
+  appendPoints(pts, line(20 - r, 5 * r, r, 5 * r));
+
+  // 7) Plusz félkiskör a szemközti falnál, hogy az alakzat ugyanarra a hosszúfalra térjen vissza.
+  appendPoints(
+    pts,
+    generateArcByAngles(
+      { x: r, y: 6 * r },
+      r,
+      -Math.PI / 2,
+      -3 * Math.PI / 2,
+      segmentsPerHalf,
+      toWorld
+    )
+  );
+
+  // 8) Utolsó egyenes a kezdő oldali fal felé.
+  appendPoints(pts, line(r, 7 * r, 20 - r, 7 * r));
+
+  // 9) Záró negyedkör: visszaér ugyanarra a hosszúfalra.
+  appendPoints(
+    pts,
+    generateArcByAngles(
+      { x: 20 - r, y: 8 * r },
+      r,
+      -Math.PI / 2,
+      0,
+      segmentsPerQuarter,
+      toWorld
+    )
+  );
+
+  return pts;
 }
 
 function generateSerpentinePoints(m, arcs = 1, segmentsPerArc = 36) {
@@ -852,6 +988,13 @@ function generateSerpentinePoints(m, arcs = 1, segmentsPerArc = 36) {
   if (!a || !b || !opt) return [];
 
   const arcCount = Math.max(1, Math.round(arcs || m.serpentineArcs || 1));
+
+  // A háromívű kígyóvonalat nem szinuszgörbével közelítjük,
+  // hanem valódi negyedkör + egyenes + félkör szakaszokkal rajzoljuk.
+  if (arcCount === 3) {
+    return generateThreeLoopSerpentinePoints(m);
+  }
+
   const segments = Math.max(24, arcCount * segmentsPerArc);
   const depth = getSerpentineDepth(arcCount);
   const pts = [];
@@ -865,6 +1008,7 @@ function generateSerpentinePoints(m, arcs = 1, segmentsPerArc = 36) {
     const y = a.y + (b.y - a.y) * t;
     pts.push({ x, y });
   }
+
   return pts;
 }
 
