@@ -44,7 +44,9 @@ const MOVEMENT_TYPES = [
   { id: 'large_circle',     name: 'Nagykör (20 m)',         mode: 'circle', diameter: 20 },
   { id: 'half_large_circle', name: 'Fél nagykör (20 m)',     mode: 'half_large_circle', diameter: 20 },
   { id: 'single_serpentine', name: 'Egyívű kígyóvonal',      mode: 'serpentine', arcs: 1 },
-  { id: 'multi_serpentine',  name: 'Többívű kígyóvonal',     mode: 'serpentine', arcs: 3 },
+  { id: 'two_serpentine',    name: 'Kétívű kígyóvonal',      mode: 'serpentine', arcs: 2 },
+  { id: 'multi_serpentine',  name: 'Háromívű kígyóvonal',    mode: 'serpentine', arcs: 3 },
+  { id: 'change_rein',       name: 'Átváltás',               mode: 'change_rein' },
   { id: 'diagonal',         name: 'Átlóváltás',             mode: 'diagonal' },
   { id: 'half_diagonal',    name: 'Félátlóváltás',          mode: 'half_diagonal' },
   { id: 'change_in_circle', name: 'Körben válts',           mode: 'change_in_circle' },
@@ -80,7 +82,7 @@ const LARGE_CIRCLE_STARTS = ['C', 'B', 'E', 'A'];
 const HALF_LARGE_CIRCLE_STARTS = LARGE_CIRCLE_STARTS;
 const CHANGE_IN_CIRCLE_STARTS = [...LARGE_CIRCLE_STARTS, 'X'];
 const CIRCLE_TYPES = ['small_circle_8', 'small_circle_10', 'small_circle_15', 'large_circle'];
-const SERPENTINE_TYPES = ['single_serpentine', 'multi_serpentine'];
+const SERPENTINE_TYPES = ['single_serpentine', 'two_serpentine', 'multi_serpentine'];
 const SERPENTINE_STARTS = ['K', 'H', 'F', 'M'];
 const SERPENTINE_OPTIONS = {
   // A hosszú fal első betűje a menetirány szerint → a hosszú fal utolsó betűje
@@ -89,7 +91,8 @@ const SERPENTINE_OPTIONS = {
   F: { to: 'M', wall: 'left',  directionY: -1, inwardX:  1 },
   M: { to: 'F', wall: 'left',  directionY:  1, inwardX:  1 },
 };
-const TURN_LIMITED_TYPES = ['diagonal', 'half_diagonal', 'small_circle_8', 'small_circle_10', 'small_circle_15', 'large_circle', 'half_large_circle', 'change_in_circle', ...SERPENTINE_TYPES];
+const CHANGE_REIN_STARTS = ['K', 'E', 'H', 'F', 'B', 'M'];
+const TURN_LIMITED_TYPES = ['diagonal', 'half_diagonal', 'small_circle_8', 'small_circle_10', 'small_circle_15', 'large_circle', 'half_large_circle', 'change_in_circle', 'change_rein', ...SERPENTINE_TYPES];
 
 // ════════════════════════════════════════════════════════════
 // KONTEXTUS-ÉRZÉKENY LOGIKA – mit lehet csinálni egy adott pontból
@@ -174,6 +177,52 @@ function isSerpentineFirstLetterForDirection(pos, previousMovement = null) {
     return Math.sign(v.y) === opt.directionY;
   }
   return true;
+}
+
+function getLongWallSide(letter) {
+  if (['K', 'E', 'H'].includes(letter)) return 'right';
+  if (['F', 'B', 'M'].includes(letter)) return 'left';
+  return null;
+}
+
+function getLongWallSequence(letter) {
+  const side = getLongWallSide(letter);
+  if (side === 'right') return ['K', 'E', 'H'];
+  if (side === 'left') return ['F', 'B', 'M'];
+  return [];
+}
+
+function getLongWallInwardX(letter) {
+  return getLongWallSide(letter) === 'right' ? -1 : 1;
+}
+
+function getIncomingLongWallDirectionY(pos, previousMovement = null) {
+  if (previousMovement && getMovementEnd(previousMovement) === pos) {
+    const v = getMovementEndVector(previousMovement);
+    if (v && Math.abs(v.y) >= Math.abs(v.x) && Math.abs(v.y) > 0.001) {
+      return Math.sign(v.y);
+    }
+  }
+
+  // Ha nincs megbízható előzmény, a szélső betűknél a hosszúfal belseje felé,
+  // középen pedig a C felőli irányba indulunk alapértelmezetten.
+  if (['H', 'M'].includes(pos)) return 1;
+  return -1;
+}
+
+function getChangeReinEndLetter(startLetter, previousMovement = null, directionYOverride = null) {
+  const seq = getLongWallSequence(startLetter);
+  const idx = seq.indexOf(startLetter);
+  if (idx < 0) return startLetter;
+
+  const directionY = directionYOverride || getIncomingLongWallDirectionY(startLetter, previousMovement);
+  const newDirectionY = -directionY;
+  const nextIdx = newDirectionY < 0 ? idx + 1 : idx - 1;
+
+  // A sarkok nincsenek önálló szerkeszthető betűként kezelve, ezért ha az
+  // átváltás a saroknál térne vissza, a legközelebbi hosszúfali betű marad a
+  // logikai végpont.
+  return seq[nextIdx] || startLetter;
 }
 
 function isCircleForbiddenAtX(typeId, pos, previousMovement = null) {
@@ -272,12 +321,18 @@ function unavailableReasonForType(typeId, pos, previousMovement = null) {
         : 'fél nagykör csak A, B, C vagy E pontból; X-ről csak X-re érkező fél nagykör után';
       break;
     case 'single_serpentine':
+    case 'two_serpentine':
     case 'multi_serpentine':
       reason = SERPENTINE_STARTS.includes(pos)
         ? (isSerpentineFirstLetterForDirection(pos, previousMovement)
           ? null
           : 'nem ez a menetirány szerinti első hosszúfali betű')
         : 'csak a menetirány szerinti első hosszúfali betűnél: K, H, F vagy M';
+      break;
+    case 'change_rein':
+      reason = CHANGE_REIN_STARTS.includes(pos)
+        ? null
+        : 'átváltás csak hosszúfalról indítható: K, E, H, F, B vagy M';
       break;
     case 'diagonal':
       reason = VALID_DIAGONAL_STARTS.includes(pos) ? null : 'csak K, F, H vagy M pontból';
@@ -357,6 +412,13 @@ function autoParamsForType(typeId, pos, prev, previousMovement = null) {
     case 'serpentine': {
       updates.startLetter = pos;
       updates.endLetter = getSerpentineEndLetter(pos) || pos;
+      break;
+    }
+    case 'change_rein': {
+      const directionY = getIncomingLongWallDirectionY(pos, previousMovement);
+      updates.startLetter = pos;
+      updates.endLetter = getChangeReinEndLetter(pos, previousMovement, directionY);
+      updates.directionY = directionY;
       break;
     }
     default: break;
@@ -609,6 +671,10 @@ function generateSerpentinePath(m, arcs) {
   return pointsToSvgPath(generateSerpentinePoints(m, arcs));
 }
 
+function generateChangeReinPath(m) {
+  return pointsToSvgPath(generateChangeReinPoints(m));
+}
+
 function generatePath(m) {
   const t = MOVEMENT_TYPES.find(t => t.id === m.type);
   if (!t) return '';
@@ -621,6 +687,7 @@ function generatePath(m) {
     case 'circle':            return generateCirclePath(m, t.diameter);
     case 'half_large_circle': return generateHalfLargeCirclePath(m);
     case 'change_in_circle':  return generateChangeInCirclePath(m);
+    case 'change_rein':       return generateChangeReinPath(m);
     case 'serpentine':        return generateSerpentinePath(m, t.arcs || m.serpentineArcs || 1);
     default:                 return '';
   }
@@ -641,6 +708,7 @@ function getMovementStart(m) {
     case 'circle':            return m.centerLetter;
     case 'half_large_circle': return m.startLetter || m.centerLetter;
     case 'change_in_circle':  return m.startLetter || m.centerLetter;
+    case 'change_rein':       return m.startLetter;
     case 'serpentine':        return m.startLetter;
     default:                 return null;
   }
@@ -658,6 +726,7 @@ function getMovementEnd(m) {
     case 'circle':            return m.centerLetter;
     case 'half_large_circle': return m.endLetter || getCircleLikeEndLetter(m.type, m.startLetter || m.centerLetter);
     case 'change_in_circle':  return m.endLetter || getCircleLikeEndLetter(m.type, m.startLetter || m.centerLetter);
+    case 'change_rein':       return m.endLetter || getChangeReinEndLetter(m.startLetter, null, m.directionY);
     case 'serpentine':        return m.endLetter || getSerpentineEndLetter(m.startLetter);
     default:                 return null;
   }
@@ -754,6 +823,13 @@ function generateChangeInCirclePoints(m, segments = 24) {
   ];
 }
 
+function getSerpentineDepth(arcs) {
+  const arcCount = Math.max(1, Math.round(arcs || 1));
+  if (arcCount === 1) return 5;   // E/B és X közti félvonalig
+  if (arcCount === 2) return 10;  // középvonalig
+  return 20;                      // szemközti hosszú falig
+}
+
 function generateSerpentinePoints(m, arcs = 1, segmentsPerArc = 28) {
   const startLetter = m.startLetter;
   const endLetter = m.endLetter || getSerpentineEndLetter(startLetter);
@@ -763,7 +839,7 @@ function generateSerpentinePoints(m, arcs = 1, segmentsPerArc = 28) {
 
   const arcCount = Math.max(1, Math.round(arcs || m.serpentineArcs || 1));
   const segments = Math.max(16, arcCount * segmentsPerArc);
-  const depth = 8;
+  const depth = getSerpentineDepth(arcCount);
   const pts = [];
 
   for (let i = 0; i <= segments; i++) {
@@ -773,6 +849,72 @@ function generateSerpentinePoints(m, arcs = 1, segmentsPerArc = 28) {
     pts.push({ x, y });
   }
   return pts;
+}
+
+function generateCubicBezierPoints(p0, p1, p2, p3, segments = 32) {
+  const pts = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const mt = 1 - t;
+    pts.push({
+      x: mt * mt * mt * p0.x + 3 * mt * mt * t * p1.x + 3 * mt * t * t * p2.x + t * t * t * p3.x,
+      y: mt * mt * mt * p0.y + 3 * mt * mt * t * p1.y + 3 * mt * t * t * p2.y + t * t * t * p3.y,
+    });
+  }
+  return pts;
+}
+
+function generateHalfSmallCircleFromLongWall(startLetter, directionY, diameter = 10, segments = 24) {
+  const start = LETTERS[startLetter];
+  if (!start) return [];
+  const inwardX = getLongWallInwardX(startLetter);
+  const r = diameter / 2;
+  const center = { x: start.x + inwardX * r, y: start.y };
+  const startAngle = Math.atan2(start.y - center.y, start.x - center.x);
+
+  const candidates = [Math.PI, -Math.PI].map(sweep => {
+    const pts = [];
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const angle = startAngle + sweep * t;
+      pts.push({ x: center.x + Math.cos(angle) * r, y: center.y + Math.sin(angle) * r });
+    }
+    return pts;
+  });
+
+  const incoming = { x: 0, y: directionY };
+  let best = candidates[0];
+  let bestAngle = Infinity;
+  for (const pts of candidates) {
+    const angle = angleBetweenVectors(incoming, getFirstVector(pts));
+    if (angle != null && angle < bestAngle) {
+      best = pts;
+      bestAngle = angle;
+    }
+  }
+  return best;
+}
+
+function generateChangeReinPoints(m) {
+  const startLetter = m.startLetter;
+  const start = LETTERS[startLetter];
+  if (!start || !CHANGE_REIN_STARTS.includes(startLetter)) return [];
+
+  const directionY = m.directionY || getIncomingLongWallDirectionY(startLetter);
+  const endLetter = m.endLetter || getChangeReinEndLetter(startLetter, null, directionY);
+  const end = LETTERS[endLetter] || start;
+  const inwardX = getLongWallInwardX(startLetter);
+
+  const halfCircle = generateHalfSmallCircleFromLongWall(startLetter, directionY, 10, 28);
+  const p0 = halfCircle[halfCircle.length - 1] || start;
+  const p3 = end;
+  const tangentY = -directionY;
+  const spanY = Math.max(7, Math.abs(p3.y - p0.y));
+  const p1 = { x: p0.x, y: p0.y + tangentY * spanY * 0.55 };
+  const p2 = { x: p3.x + inwardX * 4.5, y: p3.y - tangentY * spanY * 0.55 };
+  const returnCurve = generateCubicBezierPoints(p0, p1, p2, p3, 36);
+
+  return [...halfCircle, ...returnCurve.slice(1)];
 }
 
 function getMovementPoints(m) {
@@ -801,6 +943,7 @@ function getMovementPoints(m) {
     case 'circle':            return generateCirclePoints(m, t.diameter);
     case 'half_large_circle': return generateHalfLargeCirclePoints(m);
     case 'change_in_circle':  return generateChangeInCirclePoints(m);
+    case 'change_rein':       return generateChangeReinPoints(m);
     case 'serpentine':        return generateSerpentinePoints(m, t.arcs || m.serpentineArcs || 1);
     default:                 return [];
   }
@@ -1156,6 +1299,13 @@ function buildPayloadFromState(state, currentPos, initialId, previousMovement = 
       payload.endLetter = state.endLetter || getSerpentineEndLetter(currentPos);
       payload.serpentineArcs = td.arcs || state.serpentineArcs || 1;
       break;
+    case 'change_rein': {
+      const directionY = state.directionY || getIncomingLongWallDirectionY(currentPos, previousMovement);
+      payload.startLetter = currentPos;
+      payload.endLetter = state.endLetter || getChangeReinEndLetter(currentPos, previousMovement, directionY);
+      payload.directionY = directionY;
+      break;
+    }
   }
   return payload;
 }
@@ -1392,7 +1542,7 @@ function MovementForm({ initial, currentPos, previousMovement, defaultGait, lett
           </div>
         )}
 
-        {(typeDef.mode === 'circle' || typeDef.mode === 'half_large_circle' || typeDef.mode === 'change_in_circle' || typeDef.mode === 'serpentine') && (
+        {(typeDef.mode === 'circle' || typeDef.mode === 'half_large_circle' || typeDef.mode === 'change_in_circle' || typeDef.mode === 'change_rein' || typeDef.mode === 'serpentine') && (
           <div className="col-span-2 px-2.5 py-2 text-[12px] text-forest italic bg-[#f5f0e0] border border-[#d4c9a8] rounded">
             <strong className="not-italic font-medium">{typeDef.name}</strong> {effectivePos}-nél{state.endLetter && state.endLetter !== effectivePos ? ` → ${state.endLetter}` : ''}
           </div>
@@ -1450,6 +1600,7 @@ function describeMovement(m) {
     case 'circle':            return `${t.name} – ${m.centerLetter}-nél`;
     case 'half_large_circle': return `${t.name} – ${(m.startLetter || m.centerLetter)}–${getMovementEnd(m)}`;
     case 'change_in_circle':  return `${t.name} – ${(m.startLetter || m.centerLetter)}–${getMovementEnd(m)}`;
+    case 'change_rein':       return `${t.name} – ${m.startLetter}–${getMovementEnd(m)}`;
     case 'serpentine':        return `${t.name} – ${m.startLetter}–${getMovementEnd(m)}`;
     case 'straight':          return `${t.name} – ${m.startLetter}–${m.endLetter}`;
     default:                 return t.name;
